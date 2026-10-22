@@ -2,7 +2,7 @@
 // 2D mesh avatar animated on a WebGL2 canvas. No UI and no framework: the app drives it
 // through the small API returned by createMeshAvatar().
 import { createRig } from './rig.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
 import { createSpriteModule, eyeMood } from './sprites.js';
 import { Motion } from './motion.js';
@@ -12,8 +12,9 @@ import { MOTIONS, IDLE_MOTIONS } from './motions.js';
 const EYE_PARTS = ['ball', 'low', 'crease', 'lash'];   // back to front
 const HINGE_BONES = ['lowerArmL', 'lowerArmR', 'lowerLegL', 'lowerLegR'];
 
-// Tight grid around elbows and knees. Bust rigs omit fullBody, so they get no extra lines.
-function hingeRegions(rig) {
+// Tight grid around elbows and knees, plus a bust-density face when the head is small.
+// Bust rigs omit fullBody, so they get neither.
+function meshRegions(rig) {
   const bones = rig.fullBody?.bones;
   if (!bones) return null;
   const cell = Math.max(4, Math.round(rig.mesh.baseCell / 2));
@@ -29,6 +30,8 @@ function hingeRegions(rig) {
     const y1 = Math.min(rig.image.height, Math.ceil(y + reach));
     if (x1 > x0 && y1 > y0) regions.push({ x0, x1, y0, y1, cell });
   }
+  const face = faceDensity(rig).region;
+  if (face) regions.push(face);
   return regions.length ? regions : null;
 }
 
@@ -116,7 +119,8 @@ export async function createMeshAvatarImpl(canvas, options) {
 
   // base layer, denser where hair strands bend and the face parts shift.
   // Elbows and knees get a tighter grid only when the rig has limbs.
-  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine, hingeRegions(rig));
+  const density = faceDensity(rig);
+  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine, meshRegions(rig));
   const baseW = [];
   for (let i = 0; i < baseMesh.rest.length / 2; i++) {
     const x = baseMesh.rest[i * 2], y = baseMesh.rest[i * 2 + 1];
@@ -129,7 +133,7 @@ export async function createMeshAvatarImpl(canvas, options) {
   EYES.forEach((e, i) => {
     for (const part of EYE_PARTS) {
       const n = `eye${i}_${part}`;
-      const mesh = buildGrid(rects[n], part === 'ball' ? rig.mesh.eyeBallCell : rig.mesh.eyeCell, alphaOf(imgs[n]), imgs[n].width);
+      const mesh = buildGrid(rects[n], part === 'ball' ? density.ballCell : density.eyeCell, alphaOf(imgs[n]), imgs[n].width);
       const W = [];
       for (let k = 0; k < mesh.rest.length / 2; k++) W.push(baseWeights(mesh.rest[k * 2], mesh.rest[k * 2 + 1], 0));
       const layer = R.addLayer(n, imgs[n], mesh, { eyeBall: part === 'ball' ? i : undefined });
@@ -144,7 +148,7 @@ export async function createMeshAvatarImpl(canvas, options) {
       const sheet = await loadJson(asset('sprites/sprites.json'));
       const simgs = Object.fromEntries(await Promise.all(Object.keys(sheet.layers).map(async n =>
         [n, await loadImage(asset(`sprites/${n}.png`, sheet.build))])));
-      sprites = createSprites(R, sheet, simgs, buildGrid, alphaOf);
+      sprites = createSprites(R, sheet, simgs, buildGrid, alphaOf, density.spriteCell);
     }
   } catch (err) {
     console.warn('eye / mouth sprites not loaded:', err);
@@ -216,7 +220,7 @@ export async function createMeshAvatarImpl(canvas, options) {
     }
     physics.chains.forEach((ch, k) => deformTassel(ch, tassels[k].mesh));
 
-    const ball = 7; // px of iris travel
+    const ball = 7 * density.scale; // px of iris travel; density.scale is 1 on a bust
     R.draw({
       angleX: P.angleX, angleY: P.angleY, angleZ: P.angleZ,
       eyes: [

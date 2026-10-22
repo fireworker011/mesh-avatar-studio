@@ -84,7 +84,7 @@ export function createSpriteModule(engine, rig) {
    * @param imgs     { name: HTMLImageElement }
    * @param buildGrid, alphaOf  helpers from the renderer / page
    */
-  function createSprites(R, sheet, imgs, buildGrid, alphaOf) {
+  function createSprites(R, sheet, imgs, buildGrid, alphaOf, spriteCell = rig.mesh.spriteCell) {
     const items = {};
     // draw order matters for the cross-fades: half-closed and expression eyes under closed / smiling,
     // expression closed mouths under open ones (the fade-in frame is drawn on top)
@@ -93,7 +93,7 @@ export function createSpriteModule(engine, rig) {
     const order = n => (shut(n) ? 1 : n.startsWith('eyes_') ? 0 : moodMouth(n) ? 2 : 3);
     const entries = Object.entries(sheet.layers).sort((x, y) => order(x[0]) - order(y[0]));
     for (const [name, rect] of entries) {
-      const mesh = buildGrid(rect, rig.mesh.spriteCell, alphaOf(imgs[name]), imgs[name].width);
+      const mesh = buildGrid(rect, spriteCell, alphaOf(imgs[name]), imgs[name].width);
       const W = [], inner = [];
       for (let k = 0; k < mesh.rest.length / 2; k++) {
         const x = mesh.rest[k * 2], y = mesh.rest[k * 2 + 1];

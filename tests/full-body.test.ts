@@ -5,6 +5,7 @@ import { PARAMS, parseRig, validateRig, type LimbBone, type Rig } from 'mesh-ava
 import { createRig } from '../packages/runtime/src/engine/rig.js';
 import { createPhysics } from '../packages/runtime/src/engine/physics.js';
 import { Motion } from '../packages/runtime/src/engine/motion.js';
+import { faceDensity } from '../packages/runtime/src/engine/renderer.js';
 
 function defaults() {
   return Object.fromEntries(PARAMS.map(parameter => [parameter.id, parameter.def]));
@@ -148,6 +149,62 @@ test('idle sway drives the arms only for a full-body motion', () => {
   const swung = (moving.cur as Record<string, number>).armL;
   expect(still).toBe(0);
   expect(Math.abs(swung)).toBeGreaterThan(0.05);
+});
+
+test('face deformation is the same with or without limbs', () => {
+  const bust = parseRig(fixture);
+  const standing = parseRig(fixture);
+  standing.fullBody = limb();
+  const plain = createRig(bust);
+  const posed = createRig(standing);
+  const rest = { gain: 1, bunL: [0, 0] as [number, number], bunR: [0, 0] as [number, number], strands: [] as [] };
+  const poses = [
+    { ...defaults(), angleX: 30, angleY: 20, angleZ: 15 },
+    { ...defaults(), browY: 1, browAngle: 1 },
+    { ...defaults(), mouthOpen: 1, mouthForm: 0.8, blush: 1 },
+    { ...defaults(), breath: 1, bodyAngleZ: 8 },
+  ];
+  for (const parameters of poses) {
+    for (const point of [[493, 478], [635, 568], [615, 400], [446, 470]] as [number, number][]) {
+      const left = plain.deformBase(point[0], point[1], plain.baseWeights(point[0], point[1]), parameters, rest, [0, 0]);
+      const right = posed.deformBase(point[0], point[1], posed.baseWeights(point[0], point[1]), parameters, rest, [0, 0]);
+      expect(left[0]).toBeCloseTo(right[0], 6);
+      expect(left[1]).toBeCloseTo(right[1], 6);
+    }
+  }
+  const eye = bust.eyes[0];
+  const open = plain.eyePartY(eye, 'lash', 490, 450, 1, 0);
+  const shut = plain.eyePartY(eye, 'lash', 490, 450, 0, 0);
+  expect(Math.abs(shut - open)).toBeGreaterThan(2);
+  expect(posed.eyePartY(eye, 'lash', 490, 450, 0, 1)).toBe(plain.eyePartY(eye, 'lash', 490, 450, 0, 1));
+});
+
+test('a small full-body face is meshed about as finely as a bust eye', () => {
+  const bust = parseRig(fixture);
+  expect(faceDensity(bust)).toMatchObject({ region: null, scale: 1, eyeCell: bust.mesh.eyeCell, ballCell: bust.mesh.eyeBallCell, spriteCell: bust.mesh.spriteCell });
+  const withLimbs = parseRig(fixture);
+  withLimbs.fullBody = limb();
+  expect(faceDensity(withLimbs).region).toBeNull();
+  expect(faceDensity(withLimbs).scale).toBe(1);
+  const photo = JSON.parse(readFileSync(new URL('../samples/full-body-photo/rig.json', import.meta.url), 'utf8')) as Rig;
+  const density = faceDensity(photo);
+  const eye = photo.eyes[0].opening.map(point => point[0]);
+  const span = Math.max(...eye) - Math.min(...eye);
+  expect(density.region).toBeTruthy();
+  expect(span / density.region!.cell).toBeGreaterThan(12);
+  expect(span / density.eyeCell).toBeGreaterThan(28);
+  expect(span / density.ballCell).toBeGreaterThan(20);
+  expect(density.eyeCell).toBeLessThan(photo.mesh.eyeCell);
+  expect(density.scale).toBeGreaterThan(0.1);
+  expect(density.scale).toBeLessThan(0.3);
+  const posed = createRig(photo);
+  const rest = { gain: 0, bunL: [0, 0] as [number, number], bunR: [0, 0] as [number, number], strands: [] as [] };
+  const at = photo.face.brow;
+  const weights = posed.baseWeights(at.cx, at.cy, 0);
+  const moved = posed.deformBase(at.cx, at.cy, weights, { ...defaults(), browY: 1 }, rest, [0, 0]);
+  const lift = at.cy - moved[1];
+  expect(lift).toBeCloseTo(7 * density.scale * weights.brow, 5);
+  expect(lift).toBeLessThan(2);
 });
 
 test('the full-body sample rig is valid', () => {

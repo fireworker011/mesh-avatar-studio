@@ -3,10 +3,73 @@ import { DEFAULT_LIGHTING, parseLighting } from '../lighting/settings';
 import { TERMINATOR, DETAIL_SCALE, SHADOW_SATURATION, MAX_IRRADIANCE, headRotation } from '../lighting/shading';
 import { DropShadow } from '../lighting/shadow';
 
+// A bust eye is about 95px across: 14 base cells (fine cell 7), 32 lash cells (eye cell 3),
+// 24 iris cells (ball cell 4) and 24 sprite cells. A full-body face is a small part of the
+// picture, so the same pixel cell leaves only a few quads across that eye.
+const BUST_CELLS = { base: 14, lash: 32, ball: 24, sprite: 24 };
+// The bust sample's eye is about 95px wide. Mouth height, blush, gaze and the extra
+// brow/feature offsets were chosen in those pixels.
+const BUST_EYE = 95;
+
+function featureSpan(points) {
+  if (!points?.length) return 0;
+  let min = Infinity, max = -Infinity;
+  for (const point of points) {
+    if (point[0] < min) min = point[0];
+    if (point[0] > max) max = point[0];
+  }
+  return max - min;
+}
+
+function densityCell(span, across, configured) {
+  if (!(span > 4)) return configured;
+  const needed = span / across;
+  // Already as fine as a bust face of this size. Bust rigs never reach this helper.
+  if (needed >= configured * 0.9) return configured;
+  return Math.max(0.5, needed);
+}
+
+/**
+ * Extra face grid for a full-body rig whose eyes are small in the picture.
+ * Bust rigs, and a full-body face that is already bust-sized, get no change.
+ * @param {import('../rig/types').Rig} rig
+ */
+export function faceDensity(rig) {
+  const configured = {
+    fine: rig.mesh.fine?.cell ?? rig.mesh.baseCell,
+    eye: rig.mesh.eyeCell,
+    ball: rig.mesh.eyeBallCell,
+    sprite: rig.mesh.spriteCell,
+  };
+  if (!rig.fullBody) return { region: null, eyeCell: configured.eye, ballCell: configured.ball, spriteCell: configured.sprite, scale: 1 };
+  let span = 0;
+  for (const eye of rig.eyes ?? []) {
+    const width = featureSpan(eye.opening);
+    if (width > 4) span = span ? Math.min(span, width) : width;
+  }
+  if (!span && rig.mouth?.halfLen > 2) span = rig.mouth.halfLen * 2;
+  const fineCell = densityCell(span, BUST_CELLS.base, configured.fine);
+  const fine = rig.mesh.fine;
+  const region = fine && fineCell < configured.fine
+    ? { x0: fine.x0, x1: fine.x1, y0: fine.y0, y1: fine.y1, cell: fineCell }
+    : null;
+  // A bust-sized eye keeps the authored pixel distances. A smaller full-body eye
+  // shrinks them so a blink-sized move stays a blink, not a shove across the face.
+  const scale = span > 4 && span / BUST_EYE < 0.9 ? span / BUST_EYE : 1;
+  return {
+    region,
+    eyeCell: densityCell(span, BUST_CELLS.lash, configured.eye),
+    ballCell: densityCell(span, BUST_CELLS.ball, configured.ball),
+    spriteCell: densityCell(span, BUST_CELLS.sprite, configured.sprite),
+    scale,
+  };
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createRenderer(engine, rig) {
   const { IMG, EYES, MOUTH, CHEEKS } = engine;
+  const faceScale = faceDensity(rig).scale;
   // WebGL2 renderer: textured grid meshes whose vertices are deformed on the CPU,
   // plus a fragment-shader pass for eyelids, eye balls, mouth and blush on the base layer.
 
@@ -32,6 +95,7 @@ export function createRenderer(engine, rig) {
   uniform vec4 uMouthState;  // open, form, bow, -
   uniform vec4 uCheeks;      // x0, y0, x1, y1
   uniform float uCheek;
+  uniform float uFaceScale; // 1 on a bust; smaller when a full-body eye is a small part of the picture
 
   const int EYE_N = 24;
   float crv(int e, bool top, float u) {
@@ -95,8 +159,9 @@ export function createRenderer(engine, rig) {
     if (k <= 0.0) return base;
     float line = uMouthState.z * (1.0 - s * s);
     float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
-    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0));
-    float up = line - 0.6 - open * 2.5 * hk;
+    float px = max(uFaceScale, 0.05);
+    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0)) * px;
+    float up = line - (0.6 + open * 2.5 * hk) * px;
     float lo = line + open * H * hk;
     float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
     if (cov <= 0.0) return base;
@@ -116,8 +181,9 @@ export function createRenderer(engine, rig) {
     vec4 c;
     if (uFace == 1) {
       c = mouth(p, texAt(p));
-      float blush = exp(-dot((p - uCheeks.xy) / vec2(48.0, 22.0), (p - uCheeks.xy) / vec2(48.0, 22.0)))
-                  + exp(-dot((p - uCheeks.zw) / vec2(40.0, 20.0), (p - uCheeks.zw) / vec2(40.0, 20.0)));
+      vec2 blushA = vec2(48.0, 22.0) * uFaceScale, blushB = vec2(40.0, 20.0) * uFaceScale;
+      float blush = exp(-dot((p - uCheeks.xy) / blushA, (p - uCheeks.xy) / blushA))
+                  + exp(-dot((p - uCheeks.zw) / blushB, (p - uCheeks.zw) / blushB));
       c.rgb = mix(c.rgb, c.rgb * vec3(1.0, 0.62, 0.64) , clamp(blush * uCheek * 0.55, 0.0, 1.0) * c.a);
     } else if (uFace >= 2) {
       c = eyeBall(uFace - 2, p);
@@ -402,6 +468,7 @@ export function createRenderer(engine, rig) {
       gl.uniform4f(m.u.uMouthState, state.mouthOpen, state.mouthForm, MOUTH.bow, 0);
       gl.uniform4f(m.u.uCheeks, CHEEKS[0][0], CHEEKS[0][1], CHEEKS[1][0], CHEEKS[1][1]);
       gl.uniform1f(m.u.uCheek, state.cheek);
+      gl.uniform1f(m.u.uFaceScale, faceScale);
       gl.activeTexture(gl.TEXTURE0);
 
       for (const L of this.layers) {

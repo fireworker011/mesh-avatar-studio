@@ -14,7 +14,10 @@ Only `buns`, `strands`, `accessories`, `hand`, `fullBody` and `view.gazeCenter` 
 optional groups. Required regions must still be placed even if their animation will be small.
 `fullBody` is present only for a standing figure. A bust rig omits it and deforms exactly as before.
 With it set, each limb segment rotates rigidly and only a short band at the joint blends, and
-hair and tassel anchors follow that same chain. The bust path does not. See [full-body-research.md](full-body-research.md).
+hair and tassel anchors follow that same chain. The bust path does not.
+A full-body eye that is much smaller than the bust sample also gets a finer face grid, and the
+painted mouth, blush, iris travel and the extra brow and feature offsets shrink with that eye.
+Head shift, roll and the traced eyelids already come from the rig, so they are left alone. See [full-body-research.md](full-body-research.md).
 The initial draft has empty eye polygons and is intentionally invalid until they are traced.
 See [agent-guide.md](agent-guide.md) for the process and [rig-mapping.md](rig-mapping.md) for
 the engine mapping. Do not copy the example illustration's coordinates into a new image.
@@ -140,7 +143,7 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `mesh.fine.x1` | Refinement rectangle right x, px; greater than x0. |
 | `mesh.fine.y0` | Refinement rectangle top y, px; above crown/hair. |
 | `mesh.fine.y1` | Refinement rectangle bottom y, px; below chin/hair tips. |
-| `mesh.fine.cell` | Fine base-layer cell spacing, px; example `7`, reduce only when detail needs it. |
+| `mesh.fine.cell` | Fine base-layer cell spacing, px; example `7`, reduce only when detail needs it. A full-body rig whose eyes are much smaller than a bust keeps this value, and the runtime also subdivides that face rectangle (and the eye, iris and sprite grids) so an eye still has about as many cells across it as the bust sample. A bust rig is not subdivided further. |
 | `mesh.handCell` | Hand-layer cell spacing, px; example `9`. |
 | `mesh.tasselCell` | Hanging-accessory cell spacing, px; example `6`. |
 | `mesh.eyeBallCell` | Eye white/iris layer cell spacing, px; example `4`. |

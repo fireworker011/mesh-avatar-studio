@@ -1,4 +1,5 @@
 import { FULL_BODY_BONES, LIMB_PARAMS } from '../rig/bones.js';
+import { faceDensity } from './renderer.js';
 
 export const PARAMS = [
   { id: 'angleX', label: 'Face angle X', min: -30, max: 30, def: 0, group: 'Head and body' },
@@ -98,6 +99,9 @@ export function createRig(rig) {
   const HEAD = rig.head;
   const BODY = rig.body;
   const FULL = rig.fullBody ?? null;
+  // 1 for a bust (and a bust-sized full-body face). Smaller eyes shrink the pixel
+  // offsets below; head shift, roll and the traced eyelids already come from the rig.
+  const FACE = faceDensity(rig).scale;
   const PARENT = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.parent]));
   const PARAM_OF = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.param]));
 
@@ -354,18 +358,20 @@ export function createRig(rig) {
     p[0] += (phys.bunL[0] * w.bunL + phys.bunR[0] * w.bunR) * g;
     p[1] += (phys.bunL[1] * w.bunL + phys.bunR[1] * w.bunR) * g;
     // brows
-    p[1] -= P.browY * 7 * w.brow;
+    p[1] -= P.browY * 7 * FACE * w.brow;
     if (w.brow > 0.01) {
       const a = P.browAngle * 0.12 * w.brow;
       p[1] += (x - rig.face.brow.cx) * Math.sin(a);
     }
-    p[1] += P.mouthOpen * 3.5 * w.jaw;
+    p[1] += P.mouthOpen * 3.5 * FACE * w.jaw;
     // head turn, per part: nose and mouth travel further than the eyes, the far eye
-    // narrows and the near eye widens, the ears and buns slide the other way
+    // narrows and the near eye widens, the ears and buns slide the other way.
+    // The added distances are bust pixels; FACE shrinks them on a small full-body eye.
+    // Terms that already multiply (x - centre) scale with the feature and stay put.
     const ax = P.angleX / 30, ay = P.angleY / 30;
-    p[0] += ax * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
-      - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR);
-    p[1] -= ay * (6 * w.nose + 3 * w.mouth);
+    p[0] += ax * FACE * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
+      - ax * FACE * 9 * w.earR + ax * FACE * 4 * w.earL - ax * FACE * 10 * (w.bunL + w.bunR);
+    p[1] -= ay * FACE * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
     if (w.limbs?.length) applyLimbs(p, w.limbs, P, phys);
     applyHead(p, w.head, P, w.turn);
