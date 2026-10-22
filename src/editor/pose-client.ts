@@ -1,4 +1,8 @@
 import type { PoseLandmark } from './pose-landmarks';
+import { poseScore } from './pose-landmarks';
+import { outlineFromSource, preparePoseCanvases, type PoseDetector } from './pose-prepare';
+
+export type { PoseDetector };
 
 type WorkerMessage =
   | { type: 'ready'; delegate: 'GPU' | 'CPU' }
@@ -31,10 +35,28 @@ function poseWorker() {
 }
 
 /** Detect one still image. Landmarks are normalised; null means no pose was found. */
-export function detectPoseLandmarks(image: CanvasImageSource): Promise<PoseLandmark[] | null> {
-  const run = pending.then(() => detectOne(image));
+export function detectPoseLandmarks(image: CanvasImageSource, mode: PoseDetector = 'auto'): Promise<PoseLandmark[] | null> {
+  const run = pending.then(() => detectPrepared(image, mode));
   pending = run.then(() => undefined, () => undefined);
   return run;
+}
+
+async function detectPrepared(image: CanvasImageSource, mode: PoseDetector): Promise<PoseLandmark[] | null> {
+  if (mode === 'outline') return outlineFromSource(image);
+  const canvases = preparePoseCanvases(image, mode);
+  let best: PoseLandmark[] | null = null;
+  let bestScore = 0;
+  for (const canvas of canvases) {
+    try {
+      const marks = await detectOne(canvas);
+      const score = poseScore(marks);
+      if (marks && score >= bestScore) { best = marks; bestScore = score; }
+    } catch { /* the next preparation may still see a figure */ }
+  }
+  if (mode !== 'auto' || bestScore >= 0.4) return best;
+  const outline = outlineFromSource(image);
+  if (bestScore >= 0.22) return best;
+  return outline ?? best;
 }
 
 function detectOne(image: CanvasImageSource): Promise<PoseLandmark[] | null> {

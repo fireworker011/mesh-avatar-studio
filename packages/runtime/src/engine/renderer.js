@@ -199,11 +199,17 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid lines along one axis: `cell` spacing, `fine.cell` inside [fine.from, fine.to).
-  function axis(start, len, cell, fine) {
+  // Optional extra intervals (elbows and knees) use a smaller cell. With none, the
+  // spacing matches the single fine rectangle.
+  function axis(start, len, cell, fine, extra = null) {
     const out = [start];
     let v = start;
     while (v < start + len - 0.5) {
-      const c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      let c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      if (extra) for (let i = 0; i < extra.length; i++) {
+        const region = extra[i];
+        if (v >= region.from && v < region.to && region.cell < c) c = region.cell;
+      }
       v = Math.min(start + len, v + c);
       out.push(v);
     }
@@ -211,11 +217,13 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid mesh over a layer rect (optionally denser inside `fine`); cells that are fully
-  // transparent are dropped.
-  function buildGrid(rect, cell, alpha, alphaW, fine = null) {
+  // transparent are dropped. `regions` are extra dense rectangles, used around hinges.
+  function buildGrid(rect, cell, alpha, alphaW, fine = null, regions = null) {
     const [rx, ry, rw, rh] = rect;
-    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell });
-    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell });
+    const extraX = regions && regions.map(region => ({ from: region.x0, to: region.x1, cell: region.cell }));
+    const extraY = regions && regions.map(region => ({ from: region.y0, to: region.y1, cell: region.cell }));
+    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell }, extraX);
+    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell }, extraY);
     const cols = xs.length - 1, rows = ys.length - 1;
     const nv = (cols + 1) * (rows + 1);
     const rest = new Float32Array(nv * 2), uv = new Float32Array(nv * 2);

@@ -48,11 +48,12 @@ export function imagePoint(point: Point, view: Viewport): Point {
 }
 export function nearestHandle(handles: Handle[], point: Point, view: Viewport, threshold = 8): Handle | undefined {
   let nearest: Handle | undefined;
-  let distance = threshold;
+  let best = Infinity;
   for (const handle of handles) {
+    const reach = handle.group === 'fullBody' ? Math.max(threshold, 16) : threshold;
     const p = screen(handle.point, view);
     const d = Math.hypot(p[0] - point[0], p[1] - point[1]);
-    if (d <= distance) { distance = d; nearest = handle; }
+    if (d <= reach && d <= best) { best = d; nearest = handle; }
   }
   return nearest;
 }

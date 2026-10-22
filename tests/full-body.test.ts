@@ -72,6 +72,67 @@ test('limb springs stay finite and are absent from a bust step', () => {
   expect(point.every(Number.isFinite)).toBe(true);
 });
 
+test('an extreme elbow bend keeps the forearm rigid and the hinge from collapsing', () => {
+  const standing = parseRig(fixture);
+  standing.fullBody = limb();
+  standing.fullBody.bones.lowerArmL.maxBend = Math.PI / 2;
+  const engine = createRig(standing);
+  const rest = { gain: 1, bunL: [0, 0] as [number, number], bunR: [0, 0] as [number, number], strands: [] as [] };
+  const straight = defaults();
+  const bent = defaults();
+  bent.forearmL = 1;
+  const pose = (point: [number, number], parameters: ReturnType<typeof defaults>) =>
+    engine.deformBase(point[0], point[1], engine.baseWeights(point[0], point[1]), parameters, rest, [0, 0]);
+  const elbow: [number, number] = [200, 1100];
+  const tip: [number, number] = [200, 1250];
+  const near: [number, number] = [200, 1108];
+  const tipRest = pose(tip, straight);
+  const tipBent = pose(tip, bent);
+  const restLength = Math.hypot(tipRest[0] - elbow[0], tipRest[1] - elbow[1]);
+  const bentLength = Math.hypot(tipBent[0] - elbow[0], tipBent[1] - elbow[1]);
+  expect(Math.hypot(tipBent[0] - tipRest[0], tipBent[1] - tipRest[1])).toBeGreaterThan(20);
+  expect(Math.abs(bentLength - restLength)).toBeLessThan(1);
+  const nearRest = pose(near, straight);
+  const nearBent = pose(near, bent);
+  const nearRestLength = Math.hypot(nearRest[0] - elbow[0], nearRest[1] - elbow[1]);
+  const nearBentLength = Math.hypot(nearBent[0] - elbow[0], nearBent[1] - elbow[1]);
+  expect(nearBentLength).toBeGreaterThan(nearRestLength * 0.75);
+});
+
+test('hair and tassel anchors follow the torso only when fullBody is set', () => {
+  const bust = parseRig(fixture);
+  const standing = parseRig(fixture);
+  standing.fullBody = limb();
+  standing.fullBody.bones.torso = segment([640, 1200], [640, 800], 180, 0.8);
+  const at: [number, number] = [640, 1000];
+  bust.accessories![0].pivot = at;
+  standing.accessories![0].pivot = at;
+  const bustEngine = createRig(bust);
+  const engine = createRig(standing);
+  const physics = new (createPhysics(engine, standing).Physics)();
+  const bustPhysics = new (createPhysics(bustEngine, bust).Physics)();
+  const rest = defaults();
+  const bent = defaults();
+  bent.torsoBend = 1;
+  const still = physics.hairAnchor(at, rest);
+  const moved = physics.hairAnchor(at, bent);
+  expect(Math.hypot(moved[0] - still[0], moved[1] - still[1])).toBeGreaterThan(5);
+  const bustStill = bustPhysics.hairAnchor(at, rest);
+  const bustBent = bustPhysics.hairAnchor(at, bent);
+  expect(bustBent[0]).toBe(bustStill[0]);
+  expect(bustBent[1]).toBe(bustStill[1]);
+  const phys = { gain: 1, bunL: [0, 0] as [number, number], bunR: [0, 0] as [number, number], strands: [] as [] };
+  const tassel = standing.accessories![0];
+  const hung = engine.tasselAnchor(tassel, rest, phys, [0, 0]);
+  const swung = engine.tasselAnchor(tassel, bent, phys, [0, 0]);
+  expect(Math.hypot(swung[0] - hung[0], swung[1] - hung[1])).toBeGreaterThan(5);
+  const bustTassel = bust.accessories![0];
+  const bustHung = bustEngine.tasselAnchor(bustTassel, rest, phys, [0, 0]);
+  const bustSwung = bustEngine.tasselAnchor(bustTassel, bent, phys, [0, 0]);
+  expect(bustSwung[0]).toBe(bustHung[0]);
+  expect(bustSwung[1]).toBe(bustHung[1]);
+});
+
 test('idle sway drives the arms only for a full-body motion', () => {
   const quiet = new Motion([0, 0], {});
   quiet.autoMotion = false;

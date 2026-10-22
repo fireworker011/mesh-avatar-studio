@@ -10,6 +10,27 @@ import { ExpressionOverlay } from './expression-overlay.js';
 import { MOTIONS, IDLE_MOTIONS } from './motions.js';
 
 const EYE_PARTS = ['ball', 'low', 'crease', 'lash'];   // back to front
+const HINGE_BONES = ['lowerArmL', 'lowerArmR', 'lowerLegL', 'lowerLegR'];
+
+// Tight grid around elbows and knees. Bust rigs omit fullBody, so they get no extra lines.
+function hingeRegions(rig) {
+  const bones = rig.fullBody?.bones;
+  if (!bones) return null;
+  const cell = Math.max(4, Math.round(rig.mesh.baseCell / 2));
+  const regions = [];
+  for (const name of HINGE_BONES) {
+    const bone = bones[name];
+    if (!bone) continue;
+    const [x, y] = bone.pivot;
+    const reach = Math.max(12, bone.radius * 1.4);
+    const x0 = Math.max(0, Math.floor(x - reach));
+    const x1 = Math.min(rig.image.width, Math.ceil(x + reach));
+    const y0 = Math.max(0, Math.floor(y - reach));
+    const y1 = Math.min(rig.image.height, Math.ceil(y + reach));
+    if (x1 > x0 && y1 > y0) regions.push({ x0, x1, y0, y1, cell });
+  }
+  return regions.length ? regions : null;
+}
 
 const imageCache = new Map();
 const jsonCache = new Map();
@@ -93,8 +114,9 @@ export async function createMeshAvatarImpl(canvas, options) {
   const R = new Renderer(canvas, { padTop: options.padTop ?? rig.view.padTop, padSide: options.padSide ?? rig.view.padSide, fit: options.fit });
   const rects = { base: [0, 0, IMG.w, IMG.h], ...meta.layers };
 
-  // base layer, denser where hair strands bend and the face parts shift
-  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine);
+  // base layer, denser where hair strands bend and the face parts shift.
+  // Elbows and knees get a tighter grid only when the rig has limbs.
+  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine, hingeRegions(rig));
   const baseW = [];
   for (let i = 0; i < baseMesh.rest.length / 2; i++) {
     const x = baseMesh.rest[i * 2], y = baseMesh.rest[i * 2 + 1];

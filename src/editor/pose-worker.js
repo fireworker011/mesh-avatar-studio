@@ -9,7 +9,7 @@ self.onmessage = async ({ data }) => {
   if (data.type === 'init') {
     try {
       const files = await FilesetResolver.forVisionTasks(base);
-      const options = { runningMode: 'IMAGE', numPoses: 1 };
+      const options = { runningMode: 'IMAGE', numPoses: 1, minPoseDetectionConfidence: 0.25, minPosePresenceConfidence: 0.25 };
       let delegate = 'GPU';
       try {
         tracker = await PoseLandmarker.createFromOptions(files, { ...options, baseOptions: { modelAssetPath: `${base}/pose_landmarker_lite.task`, delegate } });

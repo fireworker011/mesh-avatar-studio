@@ -3,7 +3,7 @@ import { FULL_BODY_BONES } from '../rig/bones.js';
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createPhysics(engine, rig) {
-  const { applyHead, applyBody, TASSELS, tasselAnchor } = engine;
+  const { applyHead, applyBody, applyLimbs, baseWeights, TASSELS, tasselAnchor } = engine;
   const FULL = rig.fullBody ?? null;
   const ARM_BONES = FULL_BODY_BONES.filter(bone => bone.param === 'armL' || bone.param === 'armR' || bone.param.startsWith('forearm') || bone.param.startsWith('wrist'));
   const STRANDS = (rig.strands ?? []).map(strand => {
@@ -64,6 +64,12 @@ export function createPhysics(engine, rig) {
 
     hairAnchor(at, P) {
       const p = [at[0], at[1]];
+      // Bust anchors stay head + body, which is what the physics regression measures.
+      // A full-body strand over the torso uses the same limb weights as the mesh.
+      if (FULL) {
+        const limbs = baseWeights(at[0], at[1], 0).limbs;
+        if (limbs?.length) applyLimbs(p, limbs, P, this.out);
+      }
       applyHead(p, 1, P);
       applyBody(p, at[1], P);
       return p;

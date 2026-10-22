@@ -106,7 +106,7 @@ main:has(.project-location):has(.stale) .editor-panel { height: calc(100dvh - 21
 .canvas-help { min-height: 56px; display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .context-hint { flex: 1; line-height: 1.5; }
 .zoom-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; align-items: center; flex-shrink: 0; }
-.zoom-tools button { padding: 5px 8px; font-size: 12px; }
+.zoom-tools button, .zoom-tools select { padding: 5px 8px; font-size: 12px; }
 .handle-tooltip { position: absolute; z-index: 2; pointer-events: none; max-width: 210px; background: var(--ink); color: white; padding: 6px 8px; border-radius: 6px; font-size: 12px; box-shadow: 0 2px 8px #0002; }
 .right-column { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .preview-panel { overflow: hidden; flex-shrink: 0; }

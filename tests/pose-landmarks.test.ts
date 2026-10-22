@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import fixture from '../samples/miko-qipao/rig.json';
 import { parseRig, type LimbBone, type Rig } from 'mesh-avatar';
-import { applyPoseLandmarks, type PoseLandmark } from '../src/editor/pose-landmarks';
+import { applyPoseLandmarks, mirrorLimbs, poseScore, silhouetteLandmarks, type PoseLandmark } from '../src/editor/pose-landmarks';
 
 function standingRig(): Rig {
   const rig = parseRig(fixture);
@@ -52,4 +52,26 @@ test('a hidden pose and a bust rig place nothing', () => {
   const bust = parseRig(fixture);
   expect(applyPoseLandmarks(bust, marks()).count).toBe(0);
   expect(applyPoseLandmarks(bust, marks()).rig.fullBody).toBeUndefined();
+});
+
+test('a standing silhouette places both sides and can be applied', () => {
+  const marksFromMask = silhouetteLandmarks(100, 200, (x, y) => x >= 40 && x <= 80 && y >= 10 && y <= 190);
+  expect(marksFromMask).toBeTruthy();
+  expect(poseScore(marksFromMask)).toBeCloseTo(0.55);
+  expect(marksFromMask![12].x).toBeLessThan(0.5);
+  expect(marksFromMask![11].x).toBeGreaterThan(0.5);
+  expect(marksFromMask![28].y).toBeGreaterThan(marksFromMask![12].y);
+  const placed = applyPoseLandmarks(standingRig(), marksFromMask!);
+  expect(placed.count).toBe(14);
+});
+
+test('mirroring copies image-left limbs across the centre', () => {
+  const rig = standingRig();
+  rig.image.width = 100;
+  rig.fullBody!.bones.upperArmL = { pivot: [10, 20], tip: [15, 40], radius: 8, maxBend: 0.2 };
+  const next = mirrorLimbs(rig);
+  expect(next.fullBody!.bones.upperArmR.pivot).toEqual([90, 20]);
+  expect(next.fullBody!.bones.upperArmR.tip).toEqual([85, 40]);
+  expect(next.fullBody!.bones.upperArmL.pivot).toEqual([10, 20]);
+  expect(mirrorLimbs(parseRig(fixture)).fullBody).toBeUndefined();
 });

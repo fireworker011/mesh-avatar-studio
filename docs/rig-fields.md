@@ -13,6 +13,8 @@ Ellipses are smooth influence regions, not hard cut-out boundaries.
 Only `buns`, `strands`, `accessories`, `hand`, `fullBody` and `view.gazeCenter` are optional. Omit absent
 optional groups. Required regions must still be placed even if their animation will be small.
 `fullBody` is present only for a standing figure. A bust rig omits it and deforms exactly as before.
+With it set, each limb segment rotates rigidly and only a short band at the joint blends, and
+hair and tassel anchors follow that same chain. The bust path does not. See [full-body-research.md](full-body-research.md).
 The initial draft has empty eye polygons and is intentionally invalid until they are traced.
 See [agent-guide.md](agent-guide.md) for the process and [rig-mapping.md](rig-mapping.md) for
 the engine mapping. Do not copy the example illustration's coordinates into a new image.

@@ -13,7 +13,7 @@ import { layerSignature } from './stale';
 import { RigFields } from './RigFields';
 import { GROUPS } from './parts';
 import { PartList } from './PartList';
-import { GUIDE_KEY, I18nProvider, readPreference, savePreference, useI18n, type PartGroup } from './i18n';
+import { GUIDE_KEY, I18nProvider, readPreference, sampleLabel, savePreference, useI18n, type PartGroup } from './i18n';
 import { FirstGuide, GuideSteps, Help } from './Guide';
 import { Icon } from './Icon';
 import { RecentProjects } from './RecentProjects';
@@ -395,7 +395,7 @@ function Workspace() {
             {projects && <div className="project-list" aria-label={t.localProjects}>
               {projects.length === 0 && <p>{t.noProjects}</p>}
               {projects.map(project => <button key={project.name} className={project.error ? 'unreadable-project' : undefined} disabled={opening || !!project.error} data-testid={`project-${project.name}`} onClick={() => { void openLocal(project); }}>
-                <strong>{project.name === 'sample-full-body' ? t.fullBodySample : project.readOnly ? t.sampleProject : project.name}</strong><small>{project.relativePath}</small>
+                <strong>{sampleLabel(project.name, t) ?? (project.readOnly ? t.sampleProject : project.name)}</strong><small>{project.relativePath}</small>
                 <small>{project.error ? <>{t.unreadableProject} ({project.error.code}) · {project.error.path}</> : <>{t.updated}: {new Date(project.updatedAt).toLocaleString(locale)}
                   {project.hasSprites && <span className="badge">{t.drawnVariants}</span>}{project.readOnly && <span className="badge">{t.readOnly}</span>}{project.hasSource === false && <span className="badge">{sharing.playbackBadge}</span>}</>}</small>
               </button>)}
@@ -421,7 +421,7 @@ function Workspace() {
       </nav>
     </header>
     {(localProject || pickedName) && <div className="project-location" data-testid="project-location">
-      <strong>{localProject?.name === 'sample-full-body' ? t.fullBodySample : localProject?.readOnly ? t.sampleProject : localProject?.name || pickedName}</strong>
+      <strong>{sampleLabel(localProject?.name, t) ?? (localProject?.readOnly ? t.sampleProject : localProject?.name || pickedName)}</strong>
       {localProject && <><CopyButton value={localProject.absolutePath} label={t.copyPath} icon />
       <button className="icon-button" aria-label={navigator.platform.includes('Mac') ? t.showFinder : t.showFolder} title={navigator.platform.includes('Mac') ? t.showFinder : t.showFolder} onClick={() => { void reveal(); }}><Icon name="folder" /></button>
       {localProject.readOnly && <span className="badge">{t.readOnly}</span>}</>}

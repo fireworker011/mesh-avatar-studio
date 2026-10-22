@@ -144,15 +144,22 @@ export function createRig(rig) {
 
   // Per-vertex weights of the base layer, computed once from the rest position.
   // hair: 0..1 from hairmask.png, so strands only move actual hair.
+  // Distance to the segment. Past either end the bone lets go, so the next segment
+  // owns its own interior. At the shared joint both distances are equal and both weights survive.
   function boneWeight(x, y, bone) {
     const ax = bone.pivot[0], ay = bone.pivot[1], bx = bone.tip[0], by = bone.tip[1];
     const vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
     if (len2 < 1 || bone.radius <= 0) return 0;
-    const u = Math.min(1, Math.max(0, ((x - ax) * vx + (y - ay) * vy) / len2));
-    const d = Math.hypot(x - (ax + vx * u), y - (ay + vy * u));
-    const radial = Math.exp(-((d / bone.radius) ** 2));
-    // The parent keeps the joint; this bone owns the segment toward its tip.
-    return radial < 0.02 ? 0 : radial * sstep(0.02, 0.42, u);
+    const u = ((x - ax) * vx + (y - ay) * vy) / len2;
+    const uClamped = Math.min(1, Math.max(0, u));
+    let d = Math.hypot(x - (ax + vx * uClamped), y - (ay + vy * uClamped));
+    const outside = u < 0 ? -u : u > 1 ? u - 1 : 0;
+    if (outside) d += outside * Math.sqrt(len2) * 0.65;
+    const radius = bone.radius;
+    if (d >= radius) return 0;
+    const t = 1 - d / radius;
+    const radial = t * t * (3 - 2 * t);
+    return radial < 0.02 ? 0 : radial;
   }
 
   function baseWeights(x, y, hair = 1) {
@@ -254,18 +261,82 @@ export function createRig(rig) {
       rotateAround(point, pivot[0], pivot[1], angle);
     }
   }
-  // Limb rotations stay in rest space so the existing head and body transforms
-  // still run afterwards. Zero angles leave the point unchanged.
-  function applyLimbs(point, weights, P, phys) {
-    const cache = {};
-    let sx = 0, sy = 0, sw = 0;
-    for (const [name, weight] of weights) {
-      const q = [point[0], point[1]];
-      applyChain(q, name, P, phys, cache);
-      sx += q[0] * weight; sy += q[1] * weight; sw += weight;
+  // One rigid transform for the whole bone: rotation by the chain angle, then translation.
+  // A zero chain is skipped so a resting full-body point stays bit-identical.
+  function boneRigid(name, P, phys, cache) {
+    if (cache.rigid[name]) return cache.rigid[name];
+    let theta = 0, moving = false;
+    for (let n = name; n; n = PARENT[n]) {
+      const angle = localAngle(n, P, phys);
+      if (angle !== 0) moving = true;
+      theta += angle;
     }
-    point[0] = sx + point[0] * (1 - sw);
-    point[1] = sy + point[1] * (1 - sw);
+    const rest = FULL.bones[name].pivot;
+    const posed = posedPivot(name, P, phys, cache.pivot);
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const rigid = {
+      theta, moving, c, s,
+      tx: posed[0] - (c * rest[0] - s * rest[1]),
+      ty: posed[1] - (s * rest[0] + c * rest[1]),
+    };
+    cache.rigid[name] = rigid;
+    return rigid;
+  }
+  // Dual-quaternion blend of the rigid bone transforms (Kavan et al., Skinning with
+  // Dual Quaternions). The limb interior is one bone, so it stays rigid. Only the
+  // joint band mixes two rotations, which keeps the hinge from collapsing the way a
+  // linear blend of positions does. A little linear blend at that band only trims
+  // the dual-quaternion bulge. Zero angles return before any of this runs.
+  function applyLimbs(point, weights, P, phys) {
+    if (!FULL || !weights?.length) return;
+    const cache = { pivot: {}, rigid: {} };
+    const used = [];
+    let moving = false, bound = 0;
+    for (const [name, weight] of weights) {
+      if (weight <= 0 || !FULL.bones[name]) continue;
+      const rigid = boneRigid(name, P, phys, cache);
+      if (rigid.moving) moving = true;
+      used.push({ rigid, weight });
+      bound += weight;
+    }
+    if (!moving || bound <= 0 || !used.length) return;
+    let lx = 0, ly = 0, dominant = 0;
+    const quats = [];
+    for (const { rigid, weight } of used) {
+      const half = rigid.theta * 0.5, qw = Math.cos(half), qz = Math.sin(half);
+      quats.push({
+        weight, w: qw, z: qz,
+        dx: 0.5 * (rigid.tx * qw + rigid.ty * qz),
+        dy: 0.5 * (-rigid.tx * qz + rigid.ty * qw),
+      });
+      const px = rigid.c * point[0] - rigid.s * point[1] + rigid.tx;
+      const py = rigid.s * point[0] + rigid.c * point[1] + rigid.ty;
+      lx += px * weight; ly += py * weight;
+      if (weight > dominant) dominant = weight;
+    }
+    if (bound < 1) {
+      quats.push({ weight: 1 - bound, w: 1, z: 0, dx: 0, dy: 0 });
+      lx += point[0] * (1 - bound); ly += point[1] * (1 - bound);
+    }
+    let ref = quats[0];
+    for (const q of quats) if (q.weight > ref.weight) ref = q;
+    let w = 0, z = 0, dx = 0, dy = 0;
+    for (const q of quats) {
+      const sign = q.w * ref.w + q.z * ref.z < 0 ? -1 : 1;
+      w += q.weight * q.w * sign; z += q.weight * q.z * sign;
+      dx += q.weight * q.dx * sign; dy += q.weight * q.dy * sign;
+    }
+    const mag = Math.hypot(w, z) || 1;
+    w /= mag; z /= mag; dx /= mag; dy /= mag;
+    const tx = 2 * (dx * w - dy * z);
+    const ty = 2 * (dy * w + dx * z);
+    const c = 1 - 2 * z * z, s = 2 * w * z;
+    const qx = c * point[0] - s * point[1] + tx;
+    const qy = s * point[0] + c * point[1] + ty;
+    const joint = bound > 0 ? 1 - dominant / Math.max(bound, dominant) : 0;
+    const mix = joint * 0.2;
+    point[0] = qx * (1 - mix) + lx * mix;
+    point[1] = qy * (1 - mix) + ly * mix;
   }
 
   // Base layer: hair and face-part offsets are added in rest space, then head, then body.
@@ -367,5 +438,5 @@ export function createRig(rig) {
     const w = baseWeights(t.pivot[0], t.pivot[1]);
     return deformBase(t.pivot[0], t.pivot[1], w, P, phys, out);
   }
-  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
+  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, applyLimbs, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
 }

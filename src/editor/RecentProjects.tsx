@@ -1,4 +1,4 @@
-import { useI18n } from './i18n';
+import { sampleLabel, useI18n } from './i18n';
 import type { LocalProjectEntry } from './project';
 import type { RecentProject } from './recent-projects';
 
@@ -15,7 +15,7 @@ export function RecentProjects({ recent, projects, reopen, onOpen, onRemove, onC
       const failure = entry.kind === 'server' ? projects?.find(item => item.name === entry.serverName)?.error : undefined;
       return <div key={entry.id} className="recent-row">
         <button data-testid={`recent-${entry.id}`} className={failure ? 'unreadable-project' : undefined} disabled={!!failure} onClick={() => onOpen(entry)}>
-          <strong>{entry.serverName === 'sample-full-body' ? t.fullBodySample : entry.serverName === 'sample-miko-qipao' ? t.sampleProject : entry.name}</strong>
+          <strong>{sampleLabel(entry.serverName, t) ?? entry.name}</strong>
           <small>{entry.relativePath} · {new Date(entry.lastOpened).toLocaleString(locale)}</small>
           {failure && <small>{t.unreadableProject} ({failure.code}) · {failure.path}</small>}
           {browse && <small>{t.browseAgain}</small>}

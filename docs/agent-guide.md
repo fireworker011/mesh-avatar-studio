@@ -59,6 +59,8 @@ is a complete bust example and `samples/full-body/rig.json` is a complete standi
 Use `--full-body` for a head-to-feet illustration. It adds `rig.fullBody` (torso, arms, hands,
 hips, legs and feet) and places the head near the top of a tall image such as 9:16 or 1:2.
 Omit the flag for a bust. A bust rig has no `fullBody` field and deforms as before.
+Limb bends use rigid segments with a short blend at the elbows and knees, and long hair
+follows the torso only in that mode. The sources for that are in [full-body-research.md](full-body-research.md).
 
 ## Step 2 — Survey the image
 
