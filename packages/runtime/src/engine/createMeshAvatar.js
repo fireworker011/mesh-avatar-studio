@@ -6,7 +6,7 @@ import { createRig } from './rig.js';
 import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
 import { createSpriteModule, eyeMood } from './sprites.js';
-import { createBodyParts } from './body-parts.js';
+import { createCutout } from './body-parts.js';
 import { Motion } from './motion.js';
 import { ExpressionOverlay } from './expression-overlay.js';
 import { MOTIONS, IDLE_MOTIONS } from './motions.js';
@@ -92,12 +92,6 @@ export async function createMeshAvatarImpl(canvas, options) {
     throw new Error('createMeshAvatar requires assets or assetsBase.');
   }
   const rig = options.rig;
-  const engine = createRig(rig);
-  const { IMG, EYES, baseWeights, deformBase, eyePartY, eyePartAlpha,
-    handWeights, handFrame, deformHand, TASSELS } = engine;
-  const { Renderer, buildGrid } = createRenderer(engine, rig);
-  const { Physics } = createPhysics(engine, rig);
-  const { createSprites } = createSpriteModule(engine, rig);
   const base = (options.assetsBase ?? '').replace(/\/?$/, '/');
   const asset = (name, build) => {
     if (options.assets) {
@@ -106,6 +100,25 @@ export async function createMeshAvatarImpl(canvas, options) {
     }
     return `${base}${name}${build === undefined ? '' : `?b=${build}`}`;
   };
+  // Cut-out limbs (parts/parts.json with a cut base) are optional. Without them a
+  // full-body avatar is the one skinned illustration it always was.
+  let cut = null;
+  if (rig.fullBody) {
+    try {
+      const sheet = await loadJson(asset('parts/parts.json'));
+      if (sheet?.cutout?.base && sheet.layers?.[sheet.cutout.base]) {
+        const names = Object.keys(sheet.layers);
+        const images = Object.fromEntries(await Promise.all(names.map(async name => [name, await loadImage(asset(`parts/${name}.png`, sheet.build))])));
+        cut = { sheet, images };
+      }
+    } catch { cut = null; }
+  }
+  const engine = createRig(rig, { cutout: !!cut });
+  const { IMG, EYES, baseWeights, deformBase, eyePartY, eyePartAlpha,
+    handWeights, handFrame, deformHand, TASSELS } = engine;
+  const { Renderer, buildGrid, buildContourGrid } = createRenderer(engine, rig);
+  const { Physics } = createPhysics(engine, rig);
+  const { createSprites } = createSpriteModule(engine, rig);
   const meta = await loadJson(asset('layers.json'));
 
   const names = ['base', ...(rig.hand ? ['hand'] : []), ...TASSELS.map(t => t.name), ...[0, 1].flatMap(i => EYE_PARTS.map(p => `eye${i}_${p}`)), 'hairmask'];
@@ -122,22 +135,24 @@ export async function createMeshAvatarImpl(canvas, options) {
   // base layer, denser where hair strands bend and the face parts shift.
   // Elbows and knees get a tighter grid only when the rig has limbs.
   const density = faceDensity(rig);
-  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine, meshRegions(rig));
+  const baseImage = cut ? cut.images[cut.sheet.cutout.base] : imgs.base;
+  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(baseImage), baseImage.width, rig.mesh.fine, meshRegions(rig));
   const baseW = [];
   for (let i = 0; i < baseMesh.rest.length / 2; i++) {
     const x = baseMesh.rest[i * 2], y = baseMesh.rest[i * 2 + 1];
     baseW.push(baseWeights(x, y, hairAt(x, y)));
   }
-  R.addLayer('base', imgs.base, baseMesh, { face: true });
+  R.addLayer('base', baseImage, baseMesh, { face: true });
   const skeleton = buildSkeleton(rig);
-  const vertexBone = skeleton ? baseW.map(weights => {
+  // the cut base has no limb triangles to re-sort; its limbs are separate layers
+  const vertexBone = skeleton && !cut ? baseW.map(weights => {
     let best = '', weight = 0;
     for (const [name, value] of weights.skeletonLimbs ?? []) if (value > weight) { best = name; weight = value; }
     return best;
   }) : [];
   let skeletonBinding = null, drawKey = '', bodyTrack = null;
   function applyDrawOrder() {
-    if (!skeleton) return;
+    if (!skeleton || cut) return;
     const depth = skeletonBinding?.drawOrder ?? {};
     const key = JSON.stringify(depth);
     if (key === drawKey) return;
@@ -170,13 +185,7 @@ export async function createMeshAvatarImpl(canvas, options) {
   } catch (err) {
     console.warn('eye / mouth sprites not loaded:', err);
   }
-  let bodyParts = null;
-  try {
-    const sheet = await loadJson(asset('parts/parts.json'));
-    const names = Object.keys(sheet.layers ?? {});
-    const images = Object.fromEntries(await Promise.all(names.map(async name => [name, await loadImage(asset(`parts/${name}.png`, sheet.build))])));
-    bodyParts = createBodyParts(R, sheet, images, buildGrid, alphaOf, baseWeights, deformBase, rig);
-  } catch { bodyParts = null; }
+  const bodyParts = cut ? createCutout(R, cut.sheet, cut.images, { buildGrid, buildContourGrid, alphaOf, hairAt }, engine, rig) : null;
   // A small full-body eye has no closed-eye sprite. Moving the lash mesh squashes the
   // brow skin in that cut-out, and hiding the whole cut-out erases the brow. Leave the
   // lash where it was drawn and mask only the opening; the base shader paints the lid.

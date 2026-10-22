@@ -27,8 +27,20 @@ export const PARAMS = [
 
 // Reference algorithms are intentionally retained as JavaScript; the factory's rig input
 // and public TypeScript adapter are typed, with numerical regression covering this port.
-/** @param {import('../rig/types').Rig} rig */
-export function createRig(rig) {
+// Bones of a limb that a cut-out part rotates with. The torso, hips, spine, neck, head
+// and clavicles stay with the cut base: a part's chain stops at the first of those.
+const CUT_LIMBS = new Set(['upperArmL', 'lowerArmL', 'handL', 'upperArmR', 'lowerArmR', 'handR',
+  'upperLegL', 'lowerLegL', 'footL', 'upperLegR', 'lowerLegR', 'footR']);
+// Share of the body-yaw slide per layer. The front arm runs a little ahead of the torso:
+// part tools size the shoulder caps to hide its root over that margin (0.2 x 0.08 x span).
+const YAW_DEPTH = { torso: 0.5, front: 0.7, back: 0.05, leg: 0 };
+
+/**
+ * @param {import('../rig/types').Rig} rig
+ * @param {{ cutout?: boolean }} [options] cutout: limbs are separate rigid parts (parts.json
+ *   with a cut base); the base is then never skinned to a limb bone. Ignored on a bust.
+ */
+export function createRig(rig, options = {}) {
   const IMG = { w: rig.image.width, h: rig.image.height };
   const gaussian = (x, y, a) => a ? Math.exp(-(((x - a.cx) / a.rx) ** 2 + ((y - a.cy) / a.ry) ** 2)) : 0;
   // ---- face features ----
@@ -100,6 +112,7 @@ export function createRig(rig) {
   const HEAD = rig.head;
   const BODY = rig.body;
   const FULL = rig.fullBody ?? null;
+  const CUT = !!(options.cutout && FULL);
   // 1 for a bust (and a bust-sized full-body face). Smaller eyes shrink the pixel
   // offsets below; head shift, roll and the traced eyelids already come from the rig.
   const FACE = faceDensity(rig).scale;
@@ -256,6 +269,44 @@ export function createRig(rig) {
     // bottom rows stay put so no gap opens at the cut-off edge of the image
     rotateAround(p, BODY.pivotX, BODY.pivotY, -P.bodyAngleZ / 10 * BODY.maxRoll * (1 - sstep(...BODY.rollBand, restY)));
   }
+
+  // ---- cut-out full body ----
+  // Shoulder span, the scale of the body-yaw depth shift.
+  const SPAN = FULL ? Math.hypot(FULL.bones.upperArmR.pivot[0] - FULL.bones.upperArmL.pivot[0],
+    FULL.bones.upperArmR.pivot[1] - FULL.bones.upperArmL.pivot[1]) : 0;
+  // Body yaw on a flat drawing: layers slide by depth instead of the torso warping. The arm
+  // that turns toward the camera slides furthest, the torso about half, the far arm hardly,
+  // and the legs not at all, so the feet stay planted. Positive yaw turns the chest toward
+  // image-right, which brings the image-left arm forward.
+  function yawShift(P, depth) {
+    const yaw = Math.max(-1, Math.min(1, (P.bodyAngleX ?? 0) / 10));
+    return yaw * SPAN * 0.08 * YAW_DEPTH[depth];
+  }
+  function frontSide(P) {
+    const yaw = P.bodyAngleX ?? 0;
+    return yaw > 0 ? 'L' : yaw < 0 ? 'R' : null;
+  }
+  // The torso's own lean, from the spine of an anatomical pose or the torso slider, as one
+  // small rotation of the cut base. The spine is not bent and nothing is skinned to it.
+  function torsoLean(P) {
+    let lean = 0;
+    if (P.skeletonAngles) {
+      for (const name of ['hips', 'spine1', 'spine2', 'spine3']) lean += P.skeletonAngles[name] || 0;
+    } else {
+      lean = (P.torsoBend ?? 0) * (FULL?.bones.torso.maxBend ?? 0);
+    }
+    return Math.max(-0.05, Math.min(0.05, lean));
+  }
+  function applyCutBody(p, restY, P, chest = 0, breathW = 1, shoulder = 0) {
+    const b = P.breath;
+    p[1] -= b * (5 * breathW + 4 * shoulder);
+    p[0] += (p[0] - BODY.chest.cx) * 0.012 * b * chest;
+    p[0] += yawShift(P, 'torso');
+    const roll = -P.bodyAngleZ / 10 * BODY.maxRoll + torsoLean(P);
+    rotateAround(p, BODY.pivotX, BODY.pivotY, roll * (1 - sstep(...BODY.rollBand, restY)));
+  }
+  const applyTorso = (p, restY, P, chest, breathW, shoulder) =>
+    (CUT ? applyCutBody : applyBody)(p, restY, P, chest, breathW, shoulder);
 
   function localAngle(name, P, phys) {
     const bone = boneOf(name);
@@ -422,15 +473,73 @@ export function createRig(rig) {
       - ax * FACE * 9 * w.earR + ax * FACE * 4 * w.earL - ax * FACE * 10 * (w.bunL + w.bunR);
     p[1] -= ay * FACE * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
-    const limbs = P.skeletonAngles ? w.skeletonLimbs : w.limbs;
-    if (limbs?.length) applyLimbs(p, limbs, P, phys);
-    applyHead(p, w.head, P, w.turn);
-    applyBody(p, y, P, w.chest, w.breath, w.shoulder);
+    if (CUT) {
+      // the cut base holds only the torso, head and clothes: limbs are their own parts
+      applyHead(p, w.head, P, w.turn);
+      applyCutBody(p, y, P, w.chest, w.breath, w.shoulder);
+    } else {
+      const limbs = P.skeletonAngles ? w.skeletonLimbs : w.limbs;
+      if (limbs?.length) applyLimbs(p, limbs, P, phys);
+      applyHead(p, w.head, P, w.turn);
+      applyBody(p, y, P, w.chest, w.breath, w.shoulder);
+    }
     // Whole-body shift from hip tracking and foot contact. A zero shift is skipped,
     // and a bust has no full-body rig, so this cannot change the bust regression.
     const shift = FULL ? P.skeletonTranslation : null;
     if (shift && (shift[0] || shift[1])) { p[0] += shift[0]; p[1] += shift[1]; }
     return p;
+  }
+
+  // ---- cut-out parts ----
+  // A limb part moves as one rigid piece: the rotations of its chain about the drawn joints,
+  // then where the cut base carries its root. An arm takes the torso's local motion at the
+  // shoulder (breath, roll, lean, head weight) plus its own depth in a body yaw. A leg only
+  // follows the hip's travel: it passes under the skirt and its foot stays planted.
+  const rootCache = new Map();
+  function rootPoints(root) {
+    let hit = rootCache.get(root);
+    if (!hit) {
+      const bone = boneOf(root);
+      const [px, py] = bone.pivot;
+      const ux = bone.tip[0] - px, uy = bone.tip[1] - py, len = Math.hypot(ux, uy) || 1;
+      const reach = Math.min(24, len * 0.5);
+      const q = [px + ux / len * reach, py + uy / len * reach];
+      hit = { p: [px, py], q, wp: baseWeights(px, py, 0), wq: baseWeights(q[0], q[1], 0) };
+      rootCache.set(root, hit);
+    }
+    return hit;
+  }
+  const rootA = [0, 0], rootB = [0, 0];
+  function partFrame(name, P, phys) {
+    let c = 1, s = 0, tx = 0, ty = 0, root = name;
+    for (let n = name; n && CUT_LIMBS.has(n); n = parentOf(n, P)) {
+      root = n;
+      const a = localAngle(n, P, phys);
+      if (!a) continue;
+      const [px, py] = boneOf(n).pivot;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nc = ca * c - sa * s, ns = sa * c + ca * s;
+      const ntx = ca * (tx - px) - sa * (ty - py) + px, nty = sa * (tx - px) + ca * (ty - py) + py;
+      c = nc; s = ns; tx = ntx; ty = nty;
+    }
+    const at = rootPoints(root);
+    deformBase(at.p[0], at.p[1], at.wp, P, phys, rootA);
+    const arm = root.startsWith('upperArm');
+    let fc = 1, fs = 0, ox = rootA[0], oy = rootA[1];
+    if (arm) {
+      deformBase(at.q[0], at.q[1], at.wq, P, phys, rootB);
+      const turn = Math.atan2(rootB[1] - rootA[1], rootB[0] - rootA[0]) - Math.atan2(at.q[1] - at.p[1], at.q[0] - at.p[0]);
+      fc = Math.cos(turn); fs = Math.sin(turn);
+      const front = frontSide(P);
+      if (front) ox += yawShift(P, front === root[root.length - 1] ? 'front' : 'back') - yawShift(P, 'torso');
+    } else {
+      ox -= yawShift(P, 'torso');
+    }
+    const [px, py] = at.p;
+    return {
+      c: fc * c - fs * s, s: fs * c + fc * s,
+      tx: fc * (tx - px) - fs * (ty - py) + ox, ty: fs * (tx - px) + fc * (ty - py) + oy,
+    };
   }
 
   // ---- hand / forearm ----
@@ -498,5 +607,5 @@ export function createRig(rig) {
     const w = baseWeights(t.pivot[0], t.pivot[1]);
     return deformBase(t.pivot[0], t.pivot[1], w, P, phys, out);
   }
-  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, applyLimbs, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
+  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, cutout: CUT, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, applyTorso, applyLimbs, partFrame, frontSide, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
 }

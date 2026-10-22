@@ -328,8 +328,9 @@ test('a limb part shows its back when the arm is behind or twisted, and a fist w
   expect(partVisibility({ bone: 'upperArmL', side: 'L', kind: 'limb' }, { drawOrder: { upperArmL: -2 } })).toBe('back');
   expect(partVisibility({ bone: 'lowerArmR', side: 'R', kind: 'limb' }, { twists: { lowerArmR: 0.8 } })).toBe('back');
   expect(partVisibility({ bone: 'handL', side: 'L', kind: 'hand' }, { hands: { L: 0.8, R: 0 } })).toBe('fist');
+  // a face turn never swaps the torso or skirt for another drawing
   expect(partVisibility({ bone: 'torso', kind: 'torso' }, { angleX: 0 })).toBe('front');
-  expect(partVisibility({ bone: 'hips', kind: 'skirt' }, { angleX: 22 })).toBe('back');
+  expect(partVisibility({ bone: 'hips', kind: 'skirt' }, { angleX: 22 })).toBe('front');
 });
 
 test('triangle order is stable until a bone depth changes', () => {

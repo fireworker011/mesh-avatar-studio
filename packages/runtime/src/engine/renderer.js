@@ -383,6 +383,70 @@ export function createRenderer(engine, rig) {
     return { rect, cols, rows, rest, uv, pos: new Float32Array(rest), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
   }
 
+  // Mesh for a rigid cut-out: `cell`-sized squares inside the drawing and `edge`-pixel
+  // squares wherever a square holds both drawn and empty pixels, so the triangles follow the
+  // outline within `edge` px. All vertices sit on one `edge` lattice. The cut-out moves as one
+  // rigid piece, so the T-junctions where the two sizes meet cannot open.
+  function buildContourGrid(rect, cell, alpha, alphaW, edge = 2) {
+    const [rx, ry, rw, rh] = rect;
+    const alphaH = alpha.length / alphaW;
+    const opaqueQuad = alphaW === 1;
+    // summed-area tables of drawn (alpha > 3) and solid (alpha > 250) pixels
+    const W1 = alphaW + 1;
+    const drawn = new Int32Array(W1 * (alphaH + 1)), solid = new Int32Array(W1 * (alphaH + 1));
+    for (let y = 0; y < alphaH; y++) {
+      let rowDrawn = 0, rowSolid = 0;
+      for (let x = 0; x < alphaW; x++) {
+        const a = alpha[y * alphaW + x];
+        rowDrawn += a > 3 ? 1 : 0; rowSolid += a > 250 ? 1 : 0;
+        drawn[(y + 1) * W1 + x + 1] = drawn[y * W1 + x + 1] + rowDrawn;
+        solid[(y + 1) * W1 + x + 1] = solid[y * W1 + x + 1] + rowSolid;
+      }
+    }
+    const box = (table, x0, y0, x1, y1) => table[y1 * W1 + x1] - table[y0 * W1 + x1] - table[y1 * W1 + x0] + table[y0 * W1 + x0];
+    // `any`: a drawn pixel within the square grown by `margin`; `full`: every pixel of the grown square is solid
+    function coverage(px0, py0, px1, py1, margin) {
+      if (opaqueQuad) return { any: true, full: true };
+      const x0 = Math.max(0, px0 - margin), y0 = Math.max(0, py0 - margin);
+      const x1 = Math.min(alphaW, px1 + margin), y1 = Math.min(alphaH, py1 + margin);
+      if (x1 <= x0 || y1 <= y0) return { any: false, full: false };
+      const area = (px1 + margin - (px0 - margin)) * (py1 + margin - (py0 - margin));
+      return { any: box(drawn, x0, y0, x1, y1) > 0, full: box(solid, x0, y0, x1, y1) === area };
+    }
+    const nx = Math.ceil(rw / edge), ny = Math.ceil(rh / edge);
+    const k = Math.max(1, Math.round(cell / edge));
+    const index = new Map(), rest = [], uv = [], tris = [], lines = [];
+    const vertex = (i, j) => {
+      const key = j * (nx + 1) + i;
+      let v = index.get(key);
+      if (v === undefined) {
+        v = rest.length / 2;
+        const x = rx + Math.min(rw, i * edge), y = ry + Math.min(rh, j * edge);
+        rest.push(x, y);
+        uv.push((x - rx) / rw, (y - ry) / rh);
+        index.set(key, v);
+      }
+      return v;
+    };
+    const emit = (i0, j0, i1, j1) => {
+      const a = vertex(i0, j0), b = vertex(i1, j0), c = vertex(i0, j1), d = vertex(i1, j1);
+      tris.push(a, b, c, b, d, c);
+      lines.push(a, b, a, c, b, c, b, d, c, d);
+    };
+    const px = i => Math.min(rw, i * edge), py = j => Math.min(rh, j * edge);
+    for (let J = 0; J < ny; J += k) for (let I = 0; I < nx; I += k) {
+      const I1 = Math.min(nx, I + k), J1 = Math.min(ny, J + k);
+      const coarse = coverage(px(I), py(J), px(I1), py(J1), 2);
+      if (!coarse.any) continue;
+      if (coarse.full) { emit(I, J, I1, J1); continue; }
+      for (let j = J; j < J1; j++) for (let i = I; i < I1; i++) {
+        if (coverage(px(i), py(j), px(i + 1), py(j + 1), 1).any) emit(i, j, i + 1, j + 1);
+      }
+    }
+    const restArray = new Float32Array(rest);
+    return { rect, cols: 0, rows: 0, rest: restArray, uv: new Float32Array(uv), pos: new Float32Array(restArray), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
+  }
+
   class Renderer {
     // padTop / padSide: margin around the image, as a share of its height / width. A negative
     // padTop pushes the top of the image above the canvas (hides a cut-off top edge).
@@ -624,5 +688,5 @@ export function createRenderer(engine, rig) {
       return [(cx * dpr - this.pxOff[0]) / this.pxScale, (cy * dpr - this.pxOff[1]) / this.pxScale];
     }
   }
-  return { Renderer, buildGrid };
+  return { Renderer, buildGrid, buildContourGrid };
 }

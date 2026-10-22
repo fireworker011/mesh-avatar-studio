@@ -3,7 +3,8 @@ import { FULL_BODY_BONES } from '../rig/bones.js';
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createPhysics(engine, rig) {
-  const { applyHead, applyBody, applyLimbs, baseWeights, TASSELS, tasselAnchor } = engine;
+  const { applyHead, applyBody, applyTorso, applyLimbs, baseWeights, TASSELS, tasselAnchor } = engine;
+  const CUT = !!engine.cutout;
   const FULL = rig.fullBody ?? null;
   const ARM_BONES = FULL_BODY_BONES.filter(bone => bone.param === 'armL' || bone.param === 'armR' || bone.param.startsWith('forearm') || bone.param.startsWith('wrist'));
   const STRANDS = (rig.strands ?? []).map(strand => {
@@ -65,7 +66,13 @@ export function createPhysics(engine, rig) {
     hairAnchor(at, P) {
       const p = [at[0], at[1]];
       // Bust anchors stay head + body, which is what the physics regression measures.
-      // A full-body strand over the torso uses the same limb weights as the mesh.
+      // A full-body strand over the torso uses the same limb weights as the mesh; with
+      // cut-out limbs the torso is never skinned to a limb, and neither is its hair.
+      if (CUT) {
+        applyHead(p, 1, P);
+        applyTorso(p, at[1], P);
+        return p;
+      }
       if (FULL) {
         const weights = baseWeights(at[0], at[1], 0);
         const limbs = P.skeletonAngles ? weights.skeletonLimbs : weights.limbs;
