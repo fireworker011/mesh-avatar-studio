@@ -4,7 +4,7 @@ import vest from '../samples/full-body-vest/rig.json';
 import coat from '../samples/full-body-coat/rig.json';
 import {
   CLINICAL_DEG, IK_CHAINS, PARAMS, PRESET_NAMES, buildSkeleton, clampPose, forwardKinematics,
-  jointLimits, meshAngles, orderTriangles, parseRig,   poseFromJson, poseFromKeypoints, posePreset, trackSkeleton,
+  jointLimits, meshAngles, orderTriangles, parseRig,   poseFromJson, poseFromKeypoints, posePreset, trackSkeleton, plantFeet,
   poseToJson, restPose, solveCcd, solveFabrik, uncoveredWedges, validateRig, type LimbBone, type Rig,
 } from 'mesh-avatar';
 import { createRig } from '../packages/runtime/src/engine/rig.js';
@@ -273,6 +273,53 @@ test('wrists, ankles, clavicles, spine and fingers retarget, and a missed joint 
   const saved = poseToJson(curled);
   expect(saved.hands?.L).toBeGreaterThan(0.4);
   expect(poseFromJson(skeleton, saved).hands?.L).toBeCloseTo(saved.hands!.L, 5);
+});
+
+test('feet stay on the ground, a planted foot does not slide, and the body follows the hips', () => {
+  const skeleton = buildSkeleton(figure())!;
+  const ground = Math.max(skeleton.joints.ankleL.tip[1], skeleton.joints.ankleR.tip[1]);
+  const contact = {};
+  const standing = plantFeet(skeleton, restPose(skeleton), contact);
+  expect(standing.joints.kneeL.swing).toBeCloseTo(0, 5);
+  const dropped = restPose(skeleton);
+  dropped.translation = [0, 30];
+  const lifted = plantFeet(skeleton, dropped, {});
+  const liftedWorld = forwardKinematics(skeleton, lifted);
+  expect(liftedWorld.ankleL.tip[1] + lifted.translation![1]).toBeLessThanOrEqual(ground + 1);
+  const slid = restPose(skeleton);
+  slid.translation = [25, 0];
+  const held = plantFeet(skeleton, slid, contact);
+  const heldWorld = forwardKinematics(skeleton, held);
+  const drawn = heldWorld.ankleL.tip[0] + held.translation![0];
+  expect(Math.abs(drawn - skeleton.joints.ankleL.tip[0])).toBeLessThan(8);
+  const rows = Array.from({ length: 33 * 4 }, () => 0);
+  const put = (index: number, x: number, y: number) => { rows[index * 4] = x; rows[index * 4 + 1] = y; rows[index * 4 + 3] = 1; };
+  put(0, 400, 120);
+  put(11, 480, 200); put(13, 480, 340); put(15, 480, 460);
+  put(12, 320, 200); put(14, 320, 340); put(16, 320, 460);
+  put(23, 450, 400); put(25, 450, 560); put(27, 450, 720);
+  put(24, 350, 400); put(26, 350, 560); put(28, 350, 720);
+  const track = {};
+  trackSkeleton(skeleton, rows, track, { format: 'mediapipe' });
+  put(23, 490, 400); put(24, 390, 400);
+  const stepped = trackSkeleton(skeleton, rows, track, { format: 'mediapipe' });
+  expect(stepped.translation![0]).toBeGreaterThan(10);
+  const standingRig = figure();
+  const engine = createRig(standingRig);
+  const rest = { gain: 1, bunL: [0, 0], bunR: [0, 0], strands: [], limbs: {} };
+  const at: [number, number] = [640, 900];
+  const weights = engine.baseWeights(at[0], at[1]);
+  const still = engine.deformBase(at[0], at[1], weights, defaults(), rest, [0, 0]);
+  const shifted = engine.deformBase(at[0], at[1], weights, { ...defaults(), skeletonTranslation: [4, -3] }, rest, [0, 0]);
+  expect(shifted[0]).toBeCloseTo(still[0] + 4, 5);
+  expect(shifted[1]).toBeCloseTo(still[1] - 3, 5);
+  const bust = createRig(parseRig(fixture));
+  const bustAt: [number, number] = [615, 400];
+  const bustWeights = bust.baseWeights(bustAt[0], bustAt[1]);
+  const plain = bust.deformBase(bustAt[0], bustAt[1], bustWeights, defaults(), rest, [0, 0]);
+  const ignored = bust.deformBase(bustAt[0], bustAt[1], bustWeights, { ...defaults(), skeletonTranslation: [4, -3] }, rest, [0, 0]);
+  expect(ignored[0]).toBe(plain[0]);
+  expect(ignored[1]).toBe(plain[1]);
 });
 
 test('triangle order is stable until a bone depth changes', () => {

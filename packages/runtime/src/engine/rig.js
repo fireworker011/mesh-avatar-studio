@@ -426,6 +426,10 @@ export function createRig(rig) {
     if (limbs?.length) applyLimbs(p, limbs, P, phys);
     applyHead(p, w.head, P, w.turn);
     applyBody(p, y, P, w.chest, w.breath, w.shoulder);
+    // Whole-body shift from hip tracking and foot contact. A zero shift is skipped,
+    // and a bust has no full-body rig, so this cannot change the bust regression.
+    const shift = FULL ? P.skeletonTranslation : null;
+    if (shift && (shift[0] || shift[1])) { p[0] += shift[0]; p[1] += shift[1]; }
     return p;
   }
 

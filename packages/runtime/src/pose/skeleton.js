@@ -753,14 +753,89 @@ export function poseFromKeypoints(skeleton, input, options = {}) {
  * @param {{ pose?: Pose }} state
  * @param {{ facing?: 'camera' | 'same', format?: string, smoothing?: number, dt?: number, hands?: object[] }} [options]
  */
+function observationHip(input, options) {
+  const flat = readPeople(input);
+  if (!flat) return null;
+  const mediapipe = options.format === 'mediapipe' || (flat.length % 4 === 0 && flat.length / 4 === 33);
+  const count = mediapipe ? flat.length / 4 : flat.length / 3;
+  if (!mediapipe && count < 17) return null;
+  const table = mediapipe ? MEDIAPIPE_33 : count >= 25 ? OPENPOSE_25 : COCO_17;
+  const named = namedPoints(flat, table, mediapipe ? 4 : 3);
+  if (!usable(named.Lhip) || !usable(named.Rhip)) return null;
+  const span = usable(named.Lsho) && usable(named.Rsho)
+    ? Math.hypot(named.Lsho.x - named.Rsho.x, named.Lsho.y - named.Rsho.y) : 0;
+  return { x: (named.Lhip.x + named.Rhip.x) / 2, y: (named.Lhip.y + named.Rhip.y) / 2, span };
+}
+
+/** Keep a planted foot from sliding or sinking, and carry hip travel as a body translation.
+ * @param {Skeleton} skeleton @param {Pose} pose @param {{ groundY?: number, locks?: Record<string, number[] | null> }} [state]
+ */
+export function plantFeet(skeleton, pose, state = {}) {
+  const clamped = clampPose(skeleton, pose);
+  clamped.translation = copyTranslation(clamped.translation) ?? [0, 0];
+  const ground = state.groundY ?? Math.max(skeleton.joints.ankleL?.tip?.[1] ?? 0, skeleton.joints.ankleR?.tip?.[1] ?? 0);
+  state.groundY = ground;
+  const locks = state.locks ?? (state.locks = { L: null, R: null });
+  let world = forwardKinematics(skeleton, clamped);
+  const tx = clamped.translation[0], ty = clamped.translation[1];
+  let stance = null;
+  for (const side of ['L', 'R']) {
+    const tip = world[`ankle${side}`]?.tip;
+    if (!tip) continue;
+    const drawnX = tip[0] + tx, drawnY = tip[1] + ty;
+    if (drawnY < ground - 12) { locks[side] = null; continue; }
+    if (!locks[side]) locks[side] = [drawnX, Math.min(drawnY, ground)];
+    if (!stance || drawnY > stance.drawnY) stance = { side, drawnY, tip };
+  }
+  if (stance && locks[stance.side]) {
+    const lock = locks[stance.side];
+    const target = [lock[0] - tx, lock[1] - ty];
+    if (Math.hypot(stance.tip[0] - target[0], stance.tip[1] - target[1]) > 1.5) {
+      const solved = solveIk(skeleton, clamped, { effector: `foot${stance.side}`, target, iterations: 8 });
+      clamped.joints = solved.joints;
+      clamped.drawOrder = solved.drawOrder;
+      if (solved.hands) clamped.hands = solved.hands;
+      clamped.translation = copyTranslation(solved.translation) ?? clamped.translation;
+    }
+  }
+  world = forwardKinematics(skeleton, clamped);
+  let sink = 0;
+  for (const side of ['L', 'R']) {
+    const tip = world[`ankle${side}`]?.tip;
+    if (tip) sink = Math.max(sink, tip[1] + clamped.translation[1] - ground);
+  }
+  if (sink > 0.5) clamped.translation[1] -= sink;
+  return clamped;
+}
+
 export function trackSkeleton(skeleton, input, state, options = {}) {
   const pose = poseFromKeypoints(skeleton, input, {
     ...options,
     previous: state?.pose ?? null,
     hands: options.hands ?? input?.hands,
   });
-  if (state) state.pose = pose;
-  return pose;
+  const hip = observationHip(input, options);
+  if (hip && skeleton.joints.shoulderL && skeleton.joints.shoulderR) {
+    if (state && !state.hipHome) state.hipHome = { x: hip.x, y: hip.y };
+    const home = state?.hipHome ?? hip;
+    const rigSpan = Math.hypot(
+      skeleton.joints.shoulderL.pivot[0] - skeleton.joints.shoulderR.pivot[0],
+      skeleton.joints.shoulderL.pivot[1] - skeleton.joints.shoulderR.pivot[1],
+    ) || 1;
+    const px = hip.span > 1e-4 ? rigSpan / hip.span : 1;
+    const limit = rigSpan * 0.45;
+    pose.translation = [
+      clamp((hip.x - home.x) * px, -limit, limit),
+      clamp((hip.y - home.y) * px * 0.35, -limit * 0.35, limit * 0.35),
+    ];
+  }
+  if (options.ground === false) {
+    if (state) state.pose = pose;
+    return pose;
+  }
+  const planted = plantFeet(skeleton, pose, state?.feet ?? (state ? (state.feet = {}) : {}));
+  if (state) state.pose = planted;
+  return planted;
 }
 
 /** Wedges of illustration that a large swing uncovers. Callers may paint them; the mesh does not invent texture.

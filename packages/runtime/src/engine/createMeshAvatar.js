@@ -212,6 +212,7 @@ export async function createMeshAvatarImpl(canvas, options) {
       P.skeletonAngles = skeletonBinding.angles;
       P.skeletonParents = skeletonBinding.parents;
       P.skeletonTwist = skeletonBinding.twists;
+      if (skeletonBinding.translation) P.skeletonTranslation = skeletonBinding.translation;
     }
     const out = expression.apply(P, dt);
     lastParameters = out;
