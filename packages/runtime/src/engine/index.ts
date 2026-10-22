@@ -21,6 +21,10 @@ export interface SkeletonJointPose { swing: number; twist: number }
 export interface SkeletonPose {
   joints: Record<string, SkeletonJointPose>;
   drawOrder: Record<string, number>;
+  /** Fist curl, 0 open to 1 closed. Present when a hand observation set it. */
+  hands?: { L: number; R: number };
+  /** Rig-pixel shift of the whole body. Present when foot contact or hip tracking sets it. */
+  translation?: [number, number];
 }
 export interface SkeletonPoseFile extends SkeletonPose {
   format: 'mesh-avatar-pose';
@@ -66,7 +70,10 @@ export interface MeshAvatar {
   getSkeletonPose(): SkeletonPose | null;
   applyPosePreset(name: string): SkeletonPose | null;
   solveSkeletonIk(goal: SkeletonIkGoal): SkeletonPose | null;
-  poseFromKeypoints(input: unknown, options?: { facing?: 'camera' | 'same' }): SkeletonPose | null;
+  poseFromKeypoints(input: unknown, options?: { facing?: 'camera' | 'same'; format?: 'mediapipe' | 'openpose' | 'coco'; smoothing?: number; dt?: number }): SkeletonPose | null;
+  /** Camera pose with held low-confidence joints and smoothing. A bust returns null. */
+  trackBody(input: unknown, options?: { facing?: 'camera' | 'same'; format?: 'mediapipe' | 'openpose' | 'coco'; smoothing?: number; dt?: number; hands?: { side?: string; landmarks?: number[][] }[] }): SkeletonPose | null;
+  resetBodyTrack(): SkeletonPose | null;
   getSkeletonPoseJson(): SkeletonPoseFile | null;
   loadSkeletonPose(json: unknown): SkeletonPose | null;
   /** Polygons of the illustration a large swing uncovers. Empty when no anatomical pose is set. */

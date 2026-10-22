@@ -25,14 +25,18 @@ test('pose rows become OpenPose BODY_25 and a mirrored preview raises image-righ
   const calls: unknown[] = [];
   const avatar = {
     fullBody: true,
-    poseFromKeypoints(input: unknown, options?: { facing?: string }) { calls.push(options); return poseFromKeypoints(skeleton, input, options); },
+    trackBody(input: unknown, options?: { facing?: string; format?: string }) {
+      calls.push(options);
+      return poseFromKeypoints(skeleton, input, options);
+    },
+    poseFromKeypoints(input: unknown, options?: { facing?: string }) { return poseFromKeypoints(skeleton, input, options); },
     setSkeletonPose() { return null; },
   };
   const driver = new BodyDriver();
   driver.update({ faceLandmarks: [], faceBlendshapes: [], facialTransformationMatrixes: [], poseLandmarks: rows, hands: [{ side: 'Right', landmarks: [[0, 0, 0]] }] }, 1000);
-  const pose = driver.apply(avatar, 1200, { mirror: true, sensitivity: 1, smoothing: 0.35 });
-  expect(calls).toEqual([{ facing: 'same' }]);
+  const pose = driver.apply(avatar, 1200, 1 / 30, { mirror: true, sensitivity: 1, smoothing: 0.35 });
+  expect(calls[0]).toMatchObject({ facing: 'same', format: 'mediapipe' });
   expect(pose).toBeTruthy();
-  driver.apply({ ...avatar, fullBody: false }, 1300, { mirror: true, sensitivity: 1, smoothing: 0.35 });
+  driver.apply({ ...avatar, fullBody: false }, 1300, 1 / 30, { mirror: true, sensitivity: 1, smoothing: 0.35 });
   expect(calls).toHaveLength(1);
 });

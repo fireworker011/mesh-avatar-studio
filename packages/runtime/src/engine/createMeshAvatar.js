@@ -1,7 +1,7 @@
 // Mesh avatar engine: turns a pre-split single illustration into a
 // 2D mesh avatar animated on a WebGL2 canvas. No UI and no framework: the app drives it
 // through the small API returned by createMeshAvatar().
-import { buildSkeleton, meshAngles, orderTriangles, poseFromJson, poseFromKeypoints, posePreset, poseToJson, restPose, solveIk, uncoveredWedges } from '../pose/skeleton.js';
+import { buildSkeleton, meshAngles, orderTriangles, poseFromJson, poseFromKeypoints, posePreset, poseToJson, restPose, solveIk, trackSkeleton, uncoveredWedges } from '../pose/skeleton.js';
 import { createRig } from './rig.js';
 import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
@@ -134,7 +134,7 @@ export async function createMeshAvatarImpl(canvas, options) {
     for (const [name, value] of weights.skeletonLimbs ?? []) if (value > weight) { best = name; weight = value; }
     return best;
   }) : [];
-  let skeletonBinding = null, drawKey = '';
+  let skeletonBinding = null, drawKey = '', bodyTrack = null;
   function applyDrawOrder() {
     if (!skeleton) return;
     const depth = skeletonBinding?.drawOrder ?? {};
@@ -302,6 +302,12 @@ export async function createMeshAvatarImpl(canvas, options) {
       return this.setSkeletonPose(solveIk(skeleton, skeletonBinding?.pose ?? restPose(skeleton), goal));
     },
     poseFromKeypoints(input, options) { return skeleton ? this.setSkeletonPose(poseFromKeypoints(skeleton, input, options)) : null; },
+    trackBody(input, options = {}) {
+      if (!skeleton) return null;
+      if (!bodyTrack) bodyTrack = {};
+      return this.setSkeletonPose(trackSkeleton(skeleton, input, bodyTrack, options));
+    },
+    resetBodyTrack() { bodyTrack = null; return this.setSkeletonPose(null); },
     getSkeletonPoseJson() { return this.getSkeletonPose() ? poseToJson(this.getSkeletonPose()) : null; },
     loadSkeletonPose(json) { return skeleton ? this.setSkeletonPose(poseFromJson(skeleton, json)) : null; },
     uncoveredRegions() { return skeleton && skeletonBinding ? uncoveredWedges(skeleton, skeletonBinding.pose) : []; },

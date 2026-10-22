@@ -1,6 +1,6 @@
 export { createMeshAvatar, LIVE_EXPRESSIONS } from './engine';
 export type { MeshAvatar, MeshAvatarOptions, LiveExpression, SkeletonPose, SkeletonPoseFile, SkeletonJointPose, SkeletonIkGoal, UncoveredRegion } from './engine';
-export { CLINICAL_DEG, IK_CHAINS, PRESET_NAMES, buildSkeleton, restPose, clampPose, forwardKinematics, solveCcd, solveFabrik, solveIk, posePreset, poseToJson, poseFromJson, poseFromKeypoints, uncoveredWedges, orderTriangles, meshAngles, jointLimits } from './pose/skeleton.js';
+export { CLINICAL_DEG, IK_CHAINS, PRESET_NAMES, buildSkeleton, restPose, clampPose, forwardKinematics, solveCcd, solveFabrik, solveIk, posePreset, poseToJson, poseFromJson, poseFromKeypoints, trackSkeleton, uncoveredWedges, orderTriangles, meshAngles, jointLimits } from './pose/skeleton.js';
 export type { Rig, Eye, Strand, Accessory, Hand, Ellipse, Point, Band, FullBody, LimbBone, FullBodyBoneName } from './rig/types';
 export { validateRig, parseRig } from './rig/validate';
 export { FULL_BODY_BONES, LIMB_PARAMS } from './rig/bones.js';

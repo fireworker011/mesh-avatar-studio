@@ -17,7 +17,7 @@ const DEG = Math.PI / 180;
  * @typedef {{ name: string, parent: string | null, kind: string, side: string | null, pivot: number[], tip: number[], restVector: number[], offset: number[], length: number, radius: number, swing: Range, twist: Range }} SkeletonJoint
  * @typedef {{ order: string[], joints: Record<string, SkeletonJoint>, extraBones: Record<string, { pivot: number[], tip: number[], radius: number, maxBend: number, length: number }>, meshParents: Record<string, string | null>, limbNames: string[], headNames: string[], angleMap: Record<string, string> }} Skeleton
  * @typedef {{ swing: number, twist: number }} JointPose
- * @typedef {{ joints: Record<string, JointPose>, drawOrder: Record<string, number> }} Pose
+ * @typedef {{ joints: Record<string, JointPose>, drawOrder: Record<string, number>, hands?: { L: number, R: number }, translation?: number[] }} Pose
  */
 
 /** Degrees from the anatomical position. `hyperextension` is the small reverse past straight. */
@@ -279,12 +279,29 @@ export function restPose(skeleton) {
   return { joints, drawOrder: {} };
 }
 
+function copyHands(hands) {
+  if (!hands) return undefined;
+  return { L: Number(hands.L) || 0, R: Number(hands.R) || 0 };
+}
+
+function copyTranslation(value) {
+  if (!Array.isArray(value) || value.length < 2) return undefined;
+  const x = Number(value[0]), y = Number(value[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return [x, y];
+}
+
 export function clonePose(pose) {
   const joints = {};
   for (const [name, value] of Object.entries(pose?.joints ?? {})) {
     joints[name] = { swing: value?.swing || 0, twist: value?.twist || 0 };
   }
-  return { joints, drawOrder: { ...(pose?.drawOrder ?? {}) } };
+  const next = { joints, drawOrder: { ...(pose?.drawOrder ?? {}) } };
+  const hands = copyHands(pose?.hands);
+  const translation = copyTranslation(pose?.translation);
+  if (hands) next.hands = hands;
+  if (translation) next.translation = translation;
+  return next;
 }
 
 /** @param {Skeleton} skeleton @param {Pose} pose @returns {Pose} */
@@ -299,6 +316,10 @@ export function clampPose(skeleton, pose) {
     };
   }
   next.drawOrder = { ...(pose?.drawOrder ?? {}) };
+  const hands = copyHands(pose?.hands);
+  const translation = copyTranslation(pose?.translation);
+  if (hands) next.hands = hands;
+  if (translation) next.translation = translation;
   return next;
 }
 
@@ -462,7 +483,7 @@ export function meshAngles(skeleton, pose) {
     angles[boneName] = (angles[boneName] || 0) + value.swing;
     if (value.twist) twists[boneName] = (twists[boneName] || 0) + value.twist;
   }
-  return { angles, parents: skeleton.meshParents, twists, drawOrder: clamped.drawOrder, pose: clamped };
+  return { angles, parents: skeleton.meshParents, twists, drawOrder: clamped.drawOrder, pose: clamped, translation: clamped.translation ?? null, hands: clamped.hands ?? null };
 }
 
 /** Slider ranges for the joints this skeleton actually built.
@@ -487,7 +508,10 @@ export function poseToJson(pose) {
   for (const [name, value] of Object.entries(pose.joints)) {
     joints[name] = { swing: round(value.swing), twist: round(value.twist) };
   }
-  return { format: 'mesh-avatar-pose', version: 1, joints, drawOrder: pose.drawOrder ?? {} };
+  const file = { format: 'mesh-avatar-pose', version: 1, joints, drawOrder: pose.drawOrder ?? {} };
+  if (pose.translation) file.translation = pose.translation.map(round);
+  if (pose.hands) file.hands = { L: round(pose.hands.L || 0), R: round(pose.hands.R || 0) };
+  return file;
 }
 
 function round(value) {
@@ -498,7 +522,7 @@ export function poseFromJson(skeleton, value) {
   if (!value || value.format !== 'mesh-avatar-pose' || value.version !== 1 || !value.joints) {
     throw new Error('pose JSON must be mesh-avatar-pose version 1');
   }
-  return clampPose(skeleton, { joints: value.joints, drawOrder: value.drawOrder ?? {} });
+  return clampPose(skeleton, { joints: value.joints, drawOrder: value.drawOrder ?? {}, translation: value.translation, hands: value.hands });
 }
 
 function readPeople(input) {
@@ -513,12 +537,27 @@ function readPeople(input) {
 
 // OpenPose BODY_25 and COCO person-left is image-right on a camera-facing figure.
 // Our L is image-left, so a camera-facing detection maps person-right onto L.
-const OPENPOSE_25 = { neck: 1, Rsho: 2, Relb: 3, Rwri: 4, Lsho: 5, Lelb: 6, Lwri: 7, midhip: 8, Rhip: 9, Rkne: 10, Rank: 11, Lhip: 12, Lkne: 13, Lank: 14, nose: 0 };
+const OPENPOSE_25 = {
+  nose: 0, neck: 1, Rsho: 2, Relb: 3, Rwri: 4, Lsho: 5, Lelb: 6, Lwri: 7, midhip: 8,
+  Rhip: 9, Rkne: 10, Rank: 11, Lhip: 12, Lkne: 13, Lank: 14, Ltoe: 19, Lheel: 21, Rtoe: 22, Rheel: 24,
+};
 const COCO_17 = { nose: 0, Lsho: 5, Rsho: 6, Lelb: 7, Relb: 8, Lwri: 9, Rwri: 10, Lhip: 11, Rhip: 12, Lkne: 13, Rkne: 14, Lank: 15, Rank: 16 };
+const MEDIAPIPE_33 = {
+  nose: 0, Lsho: 11, Rsho: 12, Lelb: 13, Relb: 14, Lwri: 15, Rwri: 16,
+  Lpinky: 17, Rpinky: 18, Lindex: 19, Rindex: 20,
+  Lhip: 23, Rhip: 24, Lkne: 25, Rkne: 26, Lank: 27, Rank: 28, Lheel: 29, Rheel: 30, Ltoe: 31, Rtoe: 32,
+};
 
-function namedPoints(flat, table) {
+function namedPoints(flat, table, step) {
   const triples = [];
-  for (let i = 0; i + 2 < flat.length; i += 3) triples.push({ x: flat[i], y: flat[i + 1], c: flat[i + 2] ?? 1 });
+  for (let i = 0; i < flat.length / step; i++) {
+    const offset = i * step;
+    triples.push({
+      x: flat[offset], y: flat[offset + 1],
+      z: step >= 4 ? flat[offset + 2] : 0,
+      c: step >= 4 ? (flat[offset + 3] ?? 1) : (flat[offset + 2] ?? 1),
+    });
+  }
   const named = {};
   for (const [name, index] of Object.entries(table)) named[name] = triples[index] ?? null;
   return named;
@@ -528,45 +567,200 @@ function usable(point) {
   return point && Number.isFinite(point.x) && Number.isFinite(point.y) && (point.c ?? 1) >= 0.05;
 }
 
+function fingerCurl(points) {
+  if (!Array.isArray(points) || points.length < 21) return null;
+  const at = index => points[index];
+  const bend = (a, b, c) => {
+    const u = sub(b, a), v = sub(c, b);
+    if (hypot(u) < 1e-6 || hypot(v) < 1e-6) return 0;
+    return Math.abs(Math.atan2(u[0] * v[1] - u[1] * v[0], u[0] * v[0] + u[1] * v[1]));
+  };
+  const curls = [[5, 6, 7], [9, 10, 11], [13, 14, 15], [17, 18, 19]].map(([a, b, c]) => bend(at(a), at(b), at(c)));
+  return clamp(curls.reduce((sum, value) => sum + value, 0) / curls.length / 1.35, 0, 1);
+}
+
 /**
  * @param {object} skeleton
- * @param {object | number[]} input OpenPose BODY_25 or COCO-17 keypoints
- * @param {{ facing?: 'camera' | 'same' }} [options] camera maps a front-facing person's right to image-left
+ * @param {object | number[]} input OpenPose BODY_25, COCO-17, or MediaPipe pose rows
+ * @param {{ facing?: 'camera' | 'same', format?: 'mediapipe' | 'openpose' | 'coco', previous?: Pose, smoothing?: number, dt?: number, hands?: { side?: string, landmarks?: number[][] }[] }} [options]
+ * camera maps a front-facing person's right to image-left. `previous` keeps a joint whose
+ * confidence is below 0.05. `smoothing` blends toward that pose (0 snaps, 1 is slowest).
  */
 export function poseFromKeypoints(skeleton, input, options = {}) {
   const flat = readPeople(input);
   if (!flat) throw new Error('keypoints JSON needs pose_keypoints_2d or keypoints');
-  const count = flat.length / 3;
-  const table = count >= 25 ? OPENPOSE_25 : COCO_17;
-  if (count < 17) throw new Error('keypoints need COCO-17 or OpenPose BODY_25');
-  const named = namedPoints(flat, table);
+  const mediapipe = options.format === 'mediapipe' || (flat.length % 4 === 0 && flat.length / 4 === 33);
+  const count = mediapipe ? flat.length / 4 : flat.length / 3;
+  const table = mediapipe ? MEDIAPIPE_33 : count >= 25 ? OPENPOSE_25 : COCO_17;
+  if (!mediapipe && count < 17) throw new Error('keypoints need COCO-17 or OpenPose BODY_25');
+  if (mediapipe && count < 33) throw new Error('MediaPipe pose needs 33 landmarks');
+  const named = namedPoints(flat, table, mediapipe ? 4 : 3);
   const camera = (options.facing ?? 'camera') === 'camera';
   const our = side => camera ? (side === 'L' ? 'R' : 'L') : side;
   const pose = restPose(skeleton);
+  const seen = new Set();
   const setLimb = (joint, parentJoint, parentName, jointName, childName, hinge) => {
     const parent = named[parentName], at = named[jointName], child = named[childName];
-    if (!usable(at) || !usable(child) || !skeleton.joints[joint]) return;
+    if (!usable(at) || !usable(child) || !skeleton.joints[joint]) return false;
     if (hinge) {
-      if (!usable(parent) || !skeleton.joints[parentJoint]) return;
+      if (!usable(parent) || !skeleton.joints[parentJoint]) return false;
       const bend = signedBend(sub([at.x, at.y], [parent.x, parent.y]), sub([child.x, child.y], [at.x, at.y]));
       const illustrated = signedBend(skeleton.joints[parentJoint].restVector, skeleton.joints[joint].restVector);
       pose.joints[joint].swing = bend - illustrated;
-      return;
+      seen.add(joint);
+      return true;
     }
     const rest = skeleton.joints[joint].restVector;
     pose.joints[joint].swing = fromDown(sub([child.x, child.y], [at.x, at.y])) - fromDown(rest);
+    seen.add(joint);
+    return true;
   };
+  const neck = usable(named.neck) ? named.neck : (usable(named.Lsho) && usable(named.Rsho) ? {
+    x: (named.Lsho.x + named.Rsho.x) / 2, y: (named.Lsho.y + named.Rsho.y) / 2, c: Math.min(named.Lsho.c, named.Rsho.c), z: 0,
+  } : null);
   for (const side of ['L', 'R']) {
     const person = our(side);
     setLimb(`shoulder${side}`, null, null, `${person}sho`, `${person}elb`, false);
     setLimb(`elbow${side}`, `shoulder${side}`, `${person}sho`, `${person}elb`, `${person}wri`, true);
+    const handPoint = usable(named[`${person}index`]) ? `${person}index` : usable(named[`${person}pinky`]) ? `${person}pinky` : null;
+    if (handPoint) setLimb(`wrist${side}`, `elbow${side}`, `${person}elb`, `${person}wri`, handPoint, true);
     setLimb(`hip${side}`, null, null, `${person}hip`, `${person}kne`, false);
     setLimb(`knee${side}`, `hip${side}`, `${person}hip`, `${person}kne`, `${person}ank`, true);
+    const footPoint = usable(named[`${person}toe`]) ? `${person}toe` : usable(named[`${person}heel`]) ? `${person}heel` : null;
+    if (footPoint) setLimb(`ankle${side}`, `knee${side}`, `${person}kne`, `${person}ank`, footPoint, true);
+    if (neck && skeleton.joints[`clavicle${side}`] && usable(named[`${person}sho`])) {
+      const shoulder = named[`${person}sho`];
+      pose.joints[`clavicle${side}`].swing = fromDown(sub([shoulder.x, shoulder.y], [neck.x, neck.y])) - fromDown(skeleton.joints[`clavicle${side}`].restVector);
+      seen.add(`clavicle${side}`);
+    }
+    const wrist = named[`${person}wri`], shoulder = named[`${person}sho`];
+    if (usable(wrist) && usable(shoulder) && Number.isFinite(wrist.z) && Number.isFinite(shoulder.z) && mediapipe) {
+      const delta = wrist.z - shoulder.z;
+      if (delta < -0.03) {
+        pose.drawOrder[`upperArm${side}`] = 2;
+        pose.drawOrder[`lowerArm${side}`] = 3;
+        pose.drawOrder[`hand${side}`] = 4;
+      } else if (delta > 0.03) {
+        pose.drawOrder[`upperArm${side}`] = -2;
+        pose.drawOrder[`lowerArm${side}`] = -2;
+        pose.drawOrder[`hand${side}`] = -2;
+      }
+    }
   }
   if (usable(named.neck) && usable(named.nose) && skeleton.joints.neck) {
     pose.joints.neck.swing = fromDown(sub([named.nose.x, named.nose.y], [named.neck.x, named.neck.y])) - fromDown(skeleton.joints.neck.restVector);
+    seen.add('neck');
+  }
+  const hip = usable(named.midhip) ? named.midhip : (usable(named.Lhip) && usable(named.Rhip) ? {
+    x: (named.Lhip.x + named.Rhip.x) / 2, y: (named.Lhip.y + named.Rhip.y) / 2, c: 1,
+  } : null);
+  const shoulders = usable(named.Lsho) && usable(named.Rsho) ? {
+    x: (named.Lsho.x + named.Rsho.x) / 2, y: (named.Lsho.y + named.Rsho.y) / 2,
+  } : null;
+  if (hip && shoulders && skeleton.joints.spine1) {
+    const lower = fromDown(sub([shoulders.x, shoulders.y], [hip.x, hip.y])) - fromDown(skeleton.joints.spine1.restVector);
+    pose.joints.spine1.swing = lower * 0.45;
+    seen.add('spine1');
+    if (skeleton.joints.spine2) { pose.joints.spine2.swing = lower * 0.35; seen.add('spine2'); }
+    if (skeleton.joints.pelvis) { pose.joints.pelvis.swing = lower * 0.2; seen.add('pelvis'); }
+    if (skeleton.joints.spine3) {
+      const upper = usable(named.nose)
+        ? fromDown(sub([named.nose.x, named.nose.y], [shoulders.x, shoulders.y])) - fromDown(skeleton.joints.spine3.restVector)
+        : lower;
+      pose.joints.spine3.swing = usable(named.nose) ? upper - lower : lower * 0.2;
+      seen.add('spine3');
+    }
+  }
+  if (usable(named.Lsho) && usable(named.Rsho) && skeleton.joints.shoulderL && skeleton.joints.shoulderR) {
+    const observed = Math.hypot(named.Lsho.x - named.Rsho.x, named.Lsho.y - named.Rsho.y);
+    const rig = Math.hypot(
+      skeleton.joints.shoulderL.pivot[0] - skeleton.joints.shoulderR.pivot[0],
+      skeleton.joints.shoulderL.pivot[1] - skeleton.joints.shoulderR.pivot[1],
+    );
+    const scale = observed > 1e-4 && rig > 1 ? rig / observed : 1;
+    for (const side of ['L', 'R']) {
+      const person = our(side);
+      // Twist is written on the joint that can spin. The measured length is that
+      // segment: the forearm is the elbow bone, but an elbow cannot twist.
+      const segments = [
+        ['shoulder', `shoulder${side}`, `${person}sho`, `${person}elb`],
+        ['elbow', `wrist${side}`, `${person}elb`, `${person}wri`],
+        ['hip', `hip${side}`, `${person}hip`, `${person}kne`],
+        ['knee', `ankle${side}`, `${person}kne`, `${person}ank`],
+      ];
+      for (const [measured, jointName, fromName, toName] of segments) {
+        const bone = skeleton.joints[`${measured}${side}`];
+        const joint = skeleton.joints[jointName];
+        const from = named[fromName], to = named[toName];
+        if (!bone || !joint || !usable(from) || !usable(to) || joint.twist.max === 0) continue;
+        const length = Math.hypot(to.x - from.x, to.y - from.y);
+        const expected = bone.length / scale;
+        if (expected < 1 || length < 1) continue;
+        const ratio = length / expected;
+        if (ratio >= 0.92) continue;
+        const sign = (to.z ?? 0) <= (from.z ?? 0) ? 1 : -1;
+        pose.joints[jointName].twist = Math.acos(clamp(ratio, 0.35, 1)) * sign;
+      }
+    }
+  }
+  const hands = options.hands ?? input?.hands;
+  if (Array.isArray(hands)) {
+    pose.hands = { L: 0, R: 0 };
+    for (const hand of hands) {
+      const person = hand?.side === 'Right' ? 'R' : hand?.side === 'Left' ? 'L' : null;
+      if (!person) continue;
+      const side = camera ? (person === 'L' ? 'R' : 'L') : person;
+      const curl = fingerCurl(hand.landmarks);
+      if (curl === null) continue;
+      pose.hands[side] = curl;
+      const flex = CLINICAL_DEG.finger.flexion * DEG;
+      const swing = side === 'R' ? curl * flex : -curl * flex;
+      for (const name of skeleton.order) {
+        if (!name.startsWith(`finger${side}`)) continue;
+        pose.joints[name].swing = swing;
+        seen.add(name);
+      }
+    }
+  }
+  if (options.previous?.joints) {
+    for (const name of skeleton.order) {
+      if (seen.has(name)) continue;
+      const prior = options.previous.joints[name];
+      if (!prior) continue;
+      pose.joints[name].swing = prior.swing || 0;
+      pose.joints[name].twist = prior.twist || 0;
+    }
+    if (!pose.hands && options.previous.hands) pose.hands = copyHands(options.previous.hands);
+  }
+  if (options.previous?.joints && options.smoothing > 0) {
+    const tau = Math.max(0.04, options.smoothing * 0.18);
+    const alpha = options.dt > 0 ? 1 - Math.exp(-options.dt / tau) : 1;
+    for (const name of skeleton.order) {
+      const prior = options.previous.joints[name];
+      if (!prior) continue;
+      pose.joints[name].swing = prior.swing + (pose.joints[name].swing - prior.swing) * alpha;
+      pose.joints[name].twist = prior.twist + (pose.joints[name].twist - prior.twist) * alpha;
+    }
   }
   return clampPose(skeleton, pose);
+}
+
+/**
+ * Retarget one observation and remember it. Low-confidence joints keep the remembered
+ * swing, then the result is smoothed. `state` is owned by the caller.
+ * @param {Skeleton} skeleton
+ * @param {object | number[]} input
+ * @param {{ pose?: Pose }} state
+ * @param {{ facing?: 'camera' | 'same', format?: string, smoothing?: number, dt?: number, hands?: object[] }} [options]
+ */
+export function trackSkeleton(skeleton, input, state, options = {}) {
+  const pose = poseFromKeypoints(skeleton, input, {
+    ...options,
+    previous: state?.pose ?? null,
+    hands: options.hands ?? input?.hands,
+  });
+  if (state) state.pose = pose;
+  return pose;
 }
 
 /** Wedges of illustration that a large swing uncovers. Callers may paint them; the mesh does not invent texture.

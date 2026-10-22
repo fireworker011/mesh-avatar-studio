@@ -4,7 +4,7 @@ import vest from '../samples/full-body-vest/rig.json';
 import coat from '../samples/full-body-coat/rig.json';
 import {
   CLINICAL_DEG, IK_CHAINS, PARAMS, PRESET_NAMES, buildSkeleton, clampPose, forwardKinematics,
-  jointLimits, meshAngles, orderTriangles, parseRig, poseFromJson, poseFromKeypoints, posePreset,
+  jointLimits, meshAngles, orderTriangles, parseRig,   poseFromJson, poseFromKeypoints, posePreset, trackSkeleton,
   poseToJson, restPose, solveCcd, solveFabrik, uncoveredWedges, validateRig, type LimbBone, type Rig,
 } from 'mesh-avatar';
 import { createRig } from '../packages/runtime/src/engine/rig.js';
@@ -210,6 +210,69 @@ test('teal coat sample uses the anatomical skeleton', () => {
   expect(Math.hypot(wave.wristL.tip[0] - rest.wristL.tip[0], wave.wristL.tip[1] - rest.wristL.tip[1])).toBeGreaterThan(20);
   const sit = forwardKinematics(skeleton!, posePreset(skeleton!, 'sit'));
   expect(Math.hypot(sit.ankleL.tip[0] - rest.ankleL.tip[0], sit.ankleL.tip[1] - rest.ankleL.tip[1])).toBeGreaterThan(20);
+});
+
+test('retarget keeps bone angles when the detected arm is longer, and foreshortening twists a shortened one', () => {
+  const skeleton = buildSkeleton(figure())!;
+  const arm = (scale: number, forearm = 1) => body25({
+    1: [400, 200, 1],
+    2: [300, 200, 1], 3: [300, 200 + 180 * scale, 1], 4: [300, 200 + 180 * scale + 140 * scale * forearm, 1],
+    5: [500, 200, 1], 6: [500, 380, 1], 7: [500, 520, 1],
+    9: [360, 400, 1], 10: [360, 620, 1], 11: [360, 820, 1],
+    12: [440, 400, 1], 13: [440, 620, 1], 14: [440, 820, 1],
+  });
+  const short = poseFromKeypoints(skeleton, arm(1));
+  const long = poseFromKeypoints(skeleton, arm(2));
+  expect(long.joints.elbowL.swing).toBeCloseTo(short.joints.elbowL.swing, 5);
+  expect(Math.abs(long.joints.wristL.twist)).toBeLessThan(0.05);
+  const flat = poseFromKeypoints(skeleton, arm(1, 0.45));
+  expect(Math.abs(flat.joints.wristL.twist)).toBeGreaterThan(0.2);
+  expect(flat.joints.elbowL.twist).toBe(0);
+  withinLimits(skeleton, flat);
+});
+
+test('wrists, ankles, clavicles, spine and fingers retarget, and a missed joint keeps the previous frame', () => {
+  const skeleton = buildSkeleton(figure(true))!;
+  const rows = Array.from({ length: 33 * 4 }, () => 0);
+  const put = (index: number, x: number, y: number, z = 0, c = 1) => {
+    rows[index * 4] = x; rows[index * 4 + 1] = y; rows[index * 4 + 2] = z; rows[index * 4 + 3] = c;
+  };
+  put(0, 400, 120);
+  put(11, 500, 200); put(13, 500, 360); put(15, 500, 480, 0.2); put(19, 560, 500);
+  put(12, 300, 200); put(14, 220, 80); put(16, 180, 40, -0.4); put(20, 150, 20);
+  put(23, 460, 400); put(25, 460, 620); put(27, 460, 820); put(31, 420, 860);
+  put(24, 360, 400); put(26, 360, 620); put(28, 360, 820); put(32, 400, 860);
+  const pose = poseFromKeypoints(skeleton, rows, { format: 'mediapipe', facing: 'camera' });
+  expect(Math.abs(pose.joints.shoulderL.swing)).toBeGreaterThan(0.8);
+  expect(pose.joints.wristL.swing).not.toBe(0);
+  expect(pose.joints.ankleL.swing).not.toBe(0);
+  expect(pose.joints.clavicleL.swing).not.toBe(0);
+  expect(pose.joints.spine1.swing).not.toBe(0);
+  expect(pose.drawOrder.handL).toBeGreaterThan(pose.drawOrder.handR ?? 0);
+  const fist = Array.from({ length: 21 }, () => [0, 0, 0]);
+  for (const start of [5, 9, 13, 17]) {
+    fist[start] = [0, 0, 0];
+    fist[start + 1] = [0, 12, 0];
+    fist[start + 2] = [10, 12, 0];
+    fist[start + 3] = [14, 8, 0];
+  }
+  const curled = poseFromKeypoints(skeleton, rows, {
+    format: 'mediapipe', facing: 'camera',
+    hands: [{ side: 'Right', landmarks: fist }, { side: 'Left', landmarks: fist }],
+  });
+  expect(curled.hands?.L).toBeGreaterThan(0.4);
+  expect(Math.abs(curled.joints.fingerL0.swing)).toBeGreaterThan(0.4);
+  withinLimits(skeleton, curled);
+  put(14, 220, 80, 0, 0.01);
+  const held = poseFromKeypoints(skeleton, rows, { format: 'mediapipe', facing: 'camera', previous: pose });
+  expect(held.joints.shoulderL.swing).toBeCloseTo(pose.joints.shoulderL.swing, 5);
+  const state: { pose?: typeof pose } = {};
+  const first = trackSkeleton(skeleton, rows, state, { format: 'mediapipe', facing: 'camera', smoothing: 0 });
+  const second = trackSkeleton(skeleton, rows, state, { format: 'mediapipe', facing: 'camera', smoothing: 0.9, dt: 1 / 60 });
+  expect(second.joints.elbowR.swing).toBeCloseTo(first.joints.elbowR.swing, 2);
+  const saved = poseToJson(curled);
+  expect(saved.hands?.L).toBeGreaterThan(0.4);
+  expect(poseFromJson(skeleton, saved).hands?.L).toBeCloseTo(saved.hands!.L, 5);
 });
 
 test('triangle order is stable until a bone depth changes', () => {

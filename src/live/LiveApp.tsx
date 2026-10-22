@@ -64,7 +64,7 @@ export function LiveApp() {
       const control = controls.current, sampled = pose.current.sample(now, dt, control.options);
       setTracking(sampled.tracking);
       avatar.setAutoIdle(!sampled.tracking); avatar.setAutoMotion(!sampled.tracking);
-      body.current.apply(avatar, now, control.options);
+      body.current.apply(avatar, now, dt, control.options);
       avatar.setParameters(sampled.params, sampled.weight);
       const micOn = control.micState === 'micOn';
       avatar.setSpeaking(micOn); avatar.setVoiceLevel(micOn ? microphone.current?.level(control.gain) ?? 0 : 0);

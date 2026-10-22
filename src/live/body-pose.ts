@@ -30,8 +30,10 @@ export function poseRowsToBody25(rows: number[][]): number[] | null {
 
 interface PosableAvatar {
   fullBody: boolean;
+  trackBody?(input: unknown, options?: { facing?: 'camera' | 'same'; format?: 'mediapipe'; smoothing?: number; dt?: number; hands?: FaceResult['hands'] }): unknown;
   poseFromKeypoints(input: unknown, options?: { facing?: 'camera' | 'same' }): unknown;
   setSkeletonPose(pose: null): unknown;
+  resetBodyTrack?(): unknown;
 }
 
 /** Holds the latest body observation and applies it to a full-body avatar. A bust is left untouched. */
@@ -53,19 +55,27 @@ export class BodyDriver {
     this.seen = -Infinity;
     this.applied = false;
   }
-  apply(avatar: PosableAvatar, now: number, options: TrackingOptions) {
+  apply(avatar: PosableAvatar, now: number, dt: number, options: TrackingOptions) {
     if (!avatar.fullBody) return null;
     if (!this.rows || now - this.seen > 500) {
-      if (this.applied) { avatar.setSkeletonPose(null); this.applied = false; }
+      if (this.applied) {
+        if (avatar.resetBodyTrack) avatar.resetBodyTrack();
+        else avatar.setSkeletonPose(null);
+        this.applied = false;
+      }
       return null;
     }
-    const flat = poseRowsToBody25(this.rows);
-    if (!flat) return null;
     // A mirrored preview shows the person's right on the viewer's right, which is our image-right.
-    const pose = avatar.poseFromKeypoints(
-      { pose_keypoints_2d: flat, hands: this.hands },
-      { facing: options.mirror ? 'same' : 'camera' },
-    );
+    const facing = options.mirror ? 'same' as const : 'camera' as const;
+    const pose = avatar.trackBody
+      ? avatar.trackBody(
+        { keypoints: this.rows.flat(), hands: this.hands },
+        { format: 'mediapipe', facing, smoothing: options.smoothing, dt, hands: this.hands },
+      )
+      : avatar.poseFromKeypoints(
+        { pose_keypoints_2d: poseRowsToBody25(this.rows), hands: this.hands },
+        { facing },
+      );
     this.applied = pose != null;
     return pose;
   }
