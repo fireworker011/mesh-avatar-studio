@@ -213,3 +213,44 @@ test('the full-body sample rig is valid', () => {
   expect(rig.fullBody?.bones.footL.tip[1]).toBeGreaterThan(rig.fullBody!.bones.upperLegL.pivot[1]);
   expect(rig.image.height).toBeGreaterThan(rig.image.width * 1.5);
 });
+
+// Drawn-lip centres measured on each source image. The talking mouth is painted
+// on rig.mouth, and bow bends that line downward, so the bowed centre is what
+// has to land on the ink. The chin point is on the outline below the jaw ellipse.
+const FULL_BODY_LIPS = [
+  { folder: 'full-body-vest', lip: [424, 257], chin: [430, 336] },
+  { folder: 'full-body', lip: [270, 133], chin: [270, 156] },
+  { folder: 'full-body-photo', lip: [148.5, 117], chin: [148.5, 155] },
+  { folder: 'full-body-coat', lip: [350, 194], chin: [360, 248] },
+] as const;
+
+test('full-body talking mouths sit on the drawn lips and leave the chin outline', () => {
+  const rest = { gain: 0, bunL: [0, 0] as [number, number], bunR: [0, 0] as [number, number], strands: [] as [] };
+  for (const sample of FULL_BODY_LIPS) {
+    const rig = JSON.parse(readFileSync(new URL(`../samples/${sample.folder}/rig.json`, import.meta.url), 'utf8')) as Rig;
+    expect(validateRig(rig), sample.folder).toEqual([]);
+    const mouth = rig.mouth;
+    const bowedY = mouth.cy + mouth.bow;
+    const miss = Math.hypot(mouth.cx - sample.lip[0], bowedY - sample.lip[1]);
+    expect(miss, sample.folder).toBeLessThan(4);
+    expect(mouth.halfLen, sample.folder).toBeGreaterThan(4);
+    expect(rig.face.jaw.band[0], sample.folder).toBeGreaterThan(mouth.cy);
+
+    const engine = createRig(rig);
+    const lipWeights = engine.baseWeights(sample.lip[0], sample.lip[1], 0);
+    expect(lipWeights.mouth, sample.folder).toBeGreaterThan(0.35);
+    expect(lipWeights.jaw, sample.folder).toBeLessThan(0.15);
+
+    const shut = { ...defaults() };
+    const talking = { ...defaults(), mouthOpen: 1, mouthForm: 0 };
+    const outline: Array<readonly [number, number]> = [sample.chin];
+    // The vest mouth used to be painted on this cheek point, below and to the right of the lip.
+    if (sample.folder === 'full-body-vest') outline.push([446, 295]);
+    for (const [x, y] of outline) {
+      const closed = engine.deformBase(x, y, engine.baseWeights(x, y, 0), shut, rest, [0, 0]);
+      const open = engine.deformBase(x, y, engine.baseWeights(x, y, 0), talking, rest, [0, 0]);
+      const drop = Math.hypot(open[0] - closed[0], open[1] - closed[1]);
+      expect(drop, `${sample.folder} ${x},${y}`).toBeLessThan(0.6);
+    }
+  }
+});
