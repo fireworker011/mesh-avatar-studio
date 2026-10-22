@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 import fixture from '../samples/miko-qipao/rig.json';
 import vest from '../samples/full-body-vest/rig.json';
+import coat from '../samples/full-body-coat/rig.json';
 import {
   CLINICAL_DEG, IK_CHAINS, PARAMS, PRESET_NAMES, buildSkeleton, clampPose, forwardKinematics,
   jointLimits, meshAngles, orderTriangles, parseRig, poseFromJson, poseFromKeypoints, posePreset,
@@ -196,6 +197,19 @@ test('an anatomical pose moves a full-body forearm and does not move a bust', ()
   const wedges = uncoveredWedges(skeleton, posePreset(skeleton, 'wave'));
   expect(wedges.some(wedge => wedge.joint === 'elbowL')).toBe(true);
   expect(uncoveredWedges(skeleton, restPose(skeleton))).toEqual([]);
+});
+
+test('teal coat sample uses the anatomical skeleton', () => {
+  const skeleton = buildSkeleton(parseRig(coat));
+  expect(skeleton).not.toBeNull();
+  for (const name of ['pelvis', 'spine1', 'spine2', 'spine3', 'neck', 'head', 'shoulderL', 'elbowL', 'wristL', 'shoulderR', 'elbowR', 'wristR', 'hipL', 'kneeL', 'ankleL', 'hipR', 'kneeR', 'ankleR']) {
+    expect(skeleton!.joints[name].length, name).toBeGreaterThan(8);
+  }
+  const rest = forwardKinematics(skeleton!, restPose(skeleton!));
+  const wave = forwardKinematics(skeleton!, posePreset(skeleton!, 'wave'));
+  expect(Math.hypot(wave.wristL.tip[0] - rest.wristL.tip[0], wave.wristL.tip[1] - rest.wristL.tip[1])).toBeGreaterThan(20);
+  const sit = forwardKinematics(skeleton!, posePreset(skeleton!, 'sit'));
+  expect(Math.hypot(sit.ankleL.tip[0] - rest.ankleL.tip[0], sit.ankleL.tip[1] - rest.ankleL.tip[1])).toBeGreaterThan(20);
 });
 
 test('triangle order is stable until a bone depth changes', () => {

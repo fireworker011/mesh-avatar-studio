@@ -29,7 +29,7 @@ export const uiZh = {
   poseDetected: '已放置关节。可以拖动，也可以用方向键微调。', poseMissed: '没有找到姿态。可改用“轮廓”，或手动拖动关节。',
   poseFailed: '无法检测关节。请手动拖动关节。',
   poseDetector: '姿态检测方式', poseAuto: '自动', posePhoto: '照片', poseLine: '线稿', poseOutline: '轮廓',
-  mirrorLimbs: '把左侧镜像到右侧', photoSample: '插画姿态示例', vestSample: '背心全身示例',
+  mirrorLimbs: '把左侧镜像到右侧', photoSample: '插画姿态示例', vestSample: '背心全身示例', coatSample: '青绿外套全身示例',
   shortcutNudge: '微调选中的关节', nudgeKeys: '方向键 · 按住 Shift 移动 10 像素',
   limbPose: '四肢姿态', torsoBend: '躯干', hipSway: '髋部', armL: '左臂', armR: '右臂',
   skeletonPose: '骨骼姿态', skeletonHelp: '固定一个解剖姿态，在重置前代替四肢滑杆。关节会停在公开的活动范围。一张画没有被挡住的那一侧。',
