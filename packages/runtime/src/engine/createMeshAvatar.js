@@ -169,6 +169,15 @@ export async function createMeshAvatarImpl(canvas, options) {
   } catch (err) {
     console.warn('eye / mouth sprites not loaded:', err);
   }
+  // A small full-body eye has no closed-eye sprite. Moving the lash mesh squashes the
+  // brow skin in that cut-out, and hiding the whole cut-out erases the brow. Leave the
+  // lash where it was drawn and mask only the opening; the base shader paints the lid.
+  const paintBlink = !sprites && density.scale < 0.9;
+  if (paintBlink) {
+    for (const ep of eyeParts) {
+      if (ep.part === 'lash' || ep.part === 'low' || ep.part === 'crease') ep.layer.eyeMask = ep.eye;
+    }
+  }
 
   const tassels = TASSELS.map(t => {
     const mesh = buildGrid(rects[t.name], rig.mesh.tasselCell, alphaOf(imgs[t.name]), imgs[t.name].width);
@@ -223,11 +232,16 @@ export async function createMeshAvatarImpl(canvas, options) {
     for (const ep of eyeParts) {
       const open = eyeOpenFor(ep.eye === 0 ? P.eyeROpen : P.eyeLOpen);
       const smile = ep.eye === 0 ? P.eyeSmile : (P.eyeSmileL ?? P.eyeSmile);
-      ep.layer.alpha = eyePartAlpha(ep.part, open, smile);
+      const meshOpen = paintBlink ? 1 : open;
+      const meshSmile = paintBlink ? 0 : smile;
+      // The iris is the open eye. Lash and lower-lash ink inside the opening is masked
+      // in the shader; ink outside it, including the brow, stays where it was drawn.
+      const fade = paintBlink && ep.part === 'ball' ? Math.min(1, Math.max(0, open)) : 1;
+      ep.layer.alpha = eyePartAlpha(ep.part, meshOpen, meshSmile) * fade;
       const r = ep.mesh.rest, o = ep.mesh.pos;
       for (let k = 0; k < ep.W.length; k++) {
         const x = r[k * 2], y = r[k * 2 + 1];
-        deformBase(x, eyePartY(ep.e, ep.part, x, y, open, smile), ep.W[k], P, phys, tmp);
+        deformBase(x, eyePartY(ep.e, ep.part, x, y, meshOpen, meshSmile), ep.W[k], P, phys, tmp);
         o[k * 2] = tmp[0]; o[k * 2 + 1] = tmp[1];
       }
     }

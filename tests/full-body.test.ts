@@ -214,14 +214,15 @@ test('the full-body sample rig is valid', () => {
   expect(rig.image.height).toBeGreaterThan(rig.image.width * 1.5);
 });
 
-// Drawn-lip centres measured on each source image. The talking mouth is painted
-// on rig.mouth, and bow bends that line downward, so the bowed centre is what
-// has to land on the ink. The chin point is on the outline below the jaw ellipse.
+// Drawn-lip centres measured on each source image (the dark lip stroke, not the
+// nose shadow above it or the chin shadow below it). Bow bends the painted line
+// downward, and the open interior hangs a few pixels below that line, so the
+// bowed centre has to sit on the ink. The chin point is on the outline below the jaw.
 const FULL_BODY_LIPS = [
-  { folder: 'full-body-vest', lip: [424, 257], chin: [430, 336] },
+  { folder: 'full-body-vest', lip: [424, 283], chin: [430, 336] },
   { folder: 'full-body', lip: [270, 133], chin: [270, 156] },
-  { folder: 'full-body-photo', lip: [148.5, 117], chin: [148.5, 155] },
-  { folder: 'full-body-coat', lip: [350, 194], chin: [360, 248] },
+  { folder: 'full-body-photo', lip: [148.5, 131], chin: [148.5, 155] },
+  { folder: 'full-body-coat', lip: [350, 169], chin: [360, 248] },
 ] as const;
 
 test('full-body talking mouths sit on the drawn lips and leave the chin outline', () => {

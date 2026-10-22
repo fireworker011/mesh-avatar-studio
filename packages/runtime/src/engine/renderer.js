@@ -176,17 +176,81 @@ export function createRenderer(engine, rig) {
     return vec4(mix(base.rgb, col, cov), 1.0);
   }
 
+  // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
+  // brow and temple pixels from that cut-out across the eye. Cover the opening with skin
+  // taken from just under it, and draw one lash arc that dips in the middle. Nothing
+  // outside the traced opening is touched. A bust (uFaceScale 1) returns the base unchanged.
+  vec4 paintClosedEye(int e, vec2 p, vec4 base) {
+    if (uFaceScale > 0.9) return base;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    if (close < 0.01) return base;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return base;
+    float u = (p.x - box.x) / span;
+    if (u < 0.0 || u > 1.0) return base;
+    float top = crv(e, true, u), bot = crv(e, false, u);
+    float H = max(bot - top, 1.0);
+    // One-pixel feather at the opening edge, so the lid stays inside the drawn eye.
+    float side = smoothstep(0.0, 1.2 / span, u) * (1.0 - smoothstep(1.0 - 1.2 / span, 1.0, u));
+    float vert = smoothstep(top - 0.4, top + 0.6, p.y) * (1.0 - smoothstep(bot - 0.2, bot + 0.8, p.y));
+    float cover = side * vert * close;
+    if (cover <= 0.001) return base;
+    float sampleY = bot + max(3.0, H * 0.85);
+    vec2 sampleAt = vec2(clamp(p.x, box.x + span * 0.3, box.y - span * 0.3), sampleY);
+    vec3 skin = texAt(sampleAt).rgb;
+    float skinL = dot(skin, vec3(0.2126, 0.7152, 0.0722));
+    if (skinL < 0.22) skin = texAt(sampleAt + vec2(0.0, H)).rgb;
+    vec4 c = base;
+    c.rgb = mix(c.rgb, skin, cover);
+    float smile = clamp(uEyeState[e].y, 0.0, 1.0);
+    float hump = 4.0 * u * (1.0 - u);
+    // A single thin curve: corners in the upper half, the middle dipping a little.
+    // A smile lifts that dip. Kept thin so it reads as a drawn lash, not a squashed iris.
+    float lid = mix(top, bot, 0.46) + H * (0.08 - 0.28 * smile) * hump;
+    float thick = max(1.25, H * 0.05);
+    float taper = smoothstep(0.0, 0.12, u) * (1.0 - smoothstep(0.88, 1.0, u));
+    float lash = exp(-((p.y - lid) * (p.y - lid)) / (thick * thick)) * close * side * taper;
+    vec3 ink = vec3(0.08, 0.045, 0.035) * max(c.a, cover);
+    c.rgb = mix(c.rgb, ink, clamp(lash, 0.0, 0.98));
+    return c;
+  }
+
+  // The lash cut-out also holds the brow. Fading the whole layer would erase it, and
+  // sliding the mesh would smear it. Hide only the ink inside the opening.
+  vec4 maskEyePart(int e, vec2 p, vec4 c) {
+    if (uFaceScale > 0.9) return c;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    if (close < 0.01 || c.a < 0.01) return c;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return c;
+    float u = (p.x - box.x) / span;
+    if (u < -0.04 || u > 1.04) return c;
+    float uu = clamp(u, 0.0, 1.0);
+    float top = crv(e, true, uu), bot = crv(e, false, uu);
+    float H = max(bot - top, 1.0);
+    // The open-eye ink, including the upper lash just above the opening. The brow
+    // sits further up and is left as drawn.
+    float above = top - max(3.0, H * 0.22);
+    float side = smoothstep(-0.02, 0.03, u) * (1.0 - smoothstep(0.97, 1.02, u));
+    float inside = smoothstep(above - 0.4, above + 0.8, p.y) * (1.0 - smoothstep(bot + 0.2, bot + 1.8, p.y));
+    return c * (1.0 - inside * side * close);
+  }
+
   void main() {
     vec2 p = uRect.xy + vUv * uRect.zw;
     vec4 c;
     if (uFace == 1) {
-      c = mouth(p, texAt(p));
+      c = paintClosedEye(1, p, paintClosedEye(0, p, mouth(p, texAt(p))));
       vec2 blushA = vec2(48.0, 22.0) * uFaceScale, blushB = vec2(40.0, 20.0) * uFaceScale;
       float blush = exp(-dot((p - uCheeks.xy) / blushA, (p - uCheeks.xy) / blushA))
                   + exp(-dot((p - uCheeks.zw) / blushB, (p - uCheeks.zw) / blushB));
       c.rgb = mix(c.rgb, c.rgb * vec3(1.0, 0.62, 0.64) , clamp(blush * uCheek * 0.55, 0.0, 1.0) * c.a);
-    } else if (uFace >= 2) {
+    } else if (uFace == 2 || uFace == 3) {
       c = eyeBall(uFace - 2, p);
+    } else if (uFace == 4 || uFace == 5) {
+      c = maskEyePart(uFace - 4, p, texAt(p));
     } else {
       c = texAt(p);
     }
@@ -505,7 +569,8 @@ export function createRenderer(engine, rig) {
       if (this.lighting.enabled) { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, L.normal); gl.activeTexture(gl.TEXTURE0); }
       gl.bindTexture(gl.TEXTURE_2D, L.tex);
       gl.uniform4fv(m.u.uRect, L.mesh.rect);
-      gl.uniform1i(m.u.uFace, L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : 0);
+      const faceId = L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : L.eyeMask !== undefined ? 4 + L.eyeMask : 0;
+      gl.uniform1i(m.u.uFace, faceId);
       gl.uniform1f(m.u.uAlpha, alpha);
       gl.drawElements(gl.TRIANGLES, L.mesh.tris.length, gl.UNSIGNED_INT, 0);
     }
