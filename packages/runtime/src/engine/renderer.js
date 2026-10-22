@@ -442,6 +442,21 @@ export function createRenderer(engine, rig) {
       return layer;
     }
 
+    /** Move a layer under the body or just above it, leaving the eyes and mouth drawings on top. */
+    placeLayer(name, phase) {
+      const index = this.layers.findIndex(layer => layer.name === name);
+      if (index < 0) return;
+      const [layer] = this.layers.splice(index, 1);
+      if (phase === 'behind') {
+        const base = this.layers.findIndex(item => item.name === 'base');
+        this.layers.splice(Math.max(0, base), 0, layer);
+        return;
+      }
+      const over = this.layers.findIndex(item => /^(eye|eyes_|mouth_|hair)/.test(item.name));
+      if (over < 0) this.layers.push(layer);
+      else this.layers.splice(over, 0, layer);
+    }
+
     destroy() {
       const gl = this.gl;
       for (const layer of this.layers) {

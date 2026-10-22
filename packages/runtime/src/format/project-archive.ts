@@ -8,7 +8,7 @@ export async function packProjectAvatar(
   read: (paths: Set<string>) => Promise<Files>,
   { name, includeSource = true }: { name: string; includeSource?: boolean },
 ): Promise<Uint8Array> {
-  const wanted = new Set(['avatar.json', 'rig.json', 'built/layers.json', 'built/sprites/sprites.json']);
+  const wanted = new Set(['avatar.json', 'rig.json', 'built/layers.json', 'built/sprites/sprites.json', 'built/parts/parts.json']);
   const metadata = await read(wanted);
   const json = (path: string) => {
     try { return JSON.parse(new TextDecoder().decode(metadata[path])); }
@@ -19,7 +19,7 @@ export async function packProjectAvatar(
   checkEntryName(source); checkEntryName(thumbnail);
   wanted.add('built/base.png'); wanted.add('built/hairmask.png'); wanted.add(thumbnail);
   if (includeSource) wanted.add(source);
-  for (const [path, prefix] of [['built/layers.json', 'built/'], ['built/sprites/sprites.json', 'built/sprites/']]) {
+  for (const [path, prefix] of [['built/layers.json', 'built/'], ['built/sprites/sprites.json', 'built/sprites/'], ['built/parts/parts.json', 'built/parts/']]) {
     if (!metadata[path]) continue;
     for (const layer of Object.keys(json(path)?.layers ?? {})) {
       if (!/^[A-Za-z0-9_-]+$/.test(layer)) throw new Error(`${path}.layers.${layer}: invalid layer name`);

@@ -8,6 +8,7 @@ import {
   poseToJson, restPose, solveCcd, solveFabrik, uncoveredWedges, validateRig, type LimbBone, type Rig,
 } from 'mesh-avatar';
 import { createRig } from '../packages/runtime/src/engine/rig.js';
+import { partVisibility } from '../packages/runtime/src/engine/body-parts.js';
 
 const DEG = Math.PI / 180;
 
@@ -320,6 +321,15 @@ test('feet stay on the ground, a planted foot does not slide, and the body follo
   const ignored = bust.deformBase(bustAt[0], bustAt[1], bustWeights, { ...defaults(), skeletonTranslation: [4, -3] }, rest, [0, 0]);
   expect(ignored[0]).toBe(plain[0]);
   expect(ignored[1]).toBe(plain[1]);
+});
+
+test('a limb part shows its back when the arm is behind or twisted, and a fist when the hand closes', () => {
+  expect(partVisibility({ bone: 'upperArmL', side: 'L', kind: 'limb' }, {})).toBe('front');
+  expect(partVisibility({ bone: 'upperArmL', side: 'L', kind: 'limb' }, { drawOrder: { upperArmL: -2 } })).toBe('back');
+  expect(partVisibility({ bone: 'lowerArmR', side: 'R', kind: 'limb' }, { twists: { lowerArmR: 0.8 } })).toBe('back');
+  expect(partVisibility({ bone: 'handL', side: 'L', kind: 'hand' }, { hands: { L: 0.8, R: 0 } })).toBe('fist');
+  expect(partVisibility({ bone: 'torso', kind: 'torso' }, { angleX: 0 })).toBe('front');
+  expect(partVisibility({ bone: 'hips', kind: 'skirt' }, { angleX: 22 })).toBe('back');
 });
 
 test('triangle order is stable until a bone depth changes', () => {

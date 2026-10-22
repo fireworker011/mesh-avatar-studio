@@ -6,6 +6,7 @@ import { createRig } from './rig.js';
 import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
 import { createSpriteModule, eyeMood } from './sprites.js';
+import { createBodyParts } from './body-parts.js';
 import { Motion } from './motion.js';
 import { ExpressionOverlay } from './expression-overlay.js';
 import { MOTIONS, IDLE_MOTIONS } from './motions.js';
@@ -169,6 +170,13 @@ export async function createMeshAvatarImpl(canvas, options) {
   } catch (err) {
     console.warn('eye / mouth sprites not loaded:', err);
   }
+  let bodyParts = null;
+  try {
+    const sheet = await loadJson(asset('parts/parts.json'));
+    const names = Object.keys(sheet.layers ?? {});
+    const images = Object.fromEntries(await Promise.all(names.map(async name => [name, await loadImage(asset(`parts/${name}.png`, sheet.build))])));
+    bodyParts = createBodyParts(R, sheet, images, buildGrid, alphaOf, baseWeights, deformBase, rig);
+  } catch { bodyParts = null; }
   // A small full-body eye has no closed-eye sprite. Moving the lash mesh squashes the
   // brow skin in that cut-out, and hiding the whole cut-out erases the brow. Leave the
   // lash where it was drawn and mask only the opening; the base shader paints the lid.
@@ -256,6 +264,7 @@ export async function createMeshAvatarImpl(canvas, options) {
     }
     physics.chains.forEach((ch, k) => deformTassel(ch, tassels[k].mesh));
 
+    bodyParts?.update(P, phys, skeletonBinding);
     const ball = 7 * density.scale; // px of iris travel; density.scale is 1 on a bust
     R.draw({
       angleX: P.angleX, angleY: P.angleY, angleZ: P.angleZ,
