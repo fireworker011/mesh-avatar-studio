@@ -43,6 +43,8 @@ export interface FullBody {
   sway: number;
   /** How strongly the arms follow body roll, 0–1. */
   armFollow: number;
+  /** Optional finger chains, wrist outward. Each step is a hinge. Omit to keep the hand one bone. */
+  fingers?: { L?: Point[]; R?: Point[] };
 }
 export interface Hand {
   outline: Point[];

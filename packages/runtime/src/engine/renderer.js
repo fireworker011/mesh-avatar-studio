@@ -527,6 +527,16 @@ export function createRenderer(engine, rig) {
       gl.drawArrays(gl.POINTS, 0, pts.length);
     }
 
+    setTriangleOrder(name, tris) {
+      const layer = this.layers.find(item => item.name === name);
+      if (!layer) return;
+      const gl = this.gl;
+      gl.bindVertexArray(layer.vao);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, layer.triBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tris, gl.DYNAMIC_DRAW);
+      gl.bindVertexArray(null);
+    }
+
     // canvas CSS px -> source image px
     toImage(cx, cy) {
       if (!this.pxOff) return null;   // pointer moved before the first frame was drawn

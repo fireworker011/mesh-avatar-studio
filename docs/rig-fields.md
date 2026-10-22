@@ -15,6 +15,8 @@ optional groups. Required regions must still be placed even if their animation w
 `fullBody` is present only for a standing figure. A bust rig omits it and deforms exactly as before.
 With it set, each limb segment rotates rigidly and only a short band at the joint blends, and
 hair and tassel anchors follow that same chain. The bust path does not.
+An optional anatomical pose (separate from these fields; see [pose-system-issues.md](pose-system-issues.md))
+can drive the same bones with joint limits. Leaving that pose unset keeps the limb sliders.
 A full-body eye that is much smaller than the bust sample also gets a finer face grid, and the
 painted mouth, blush, iris travel and the extra brow and feature offsets shrink with that eye.
 Head shift, roll and the traced eyelids already come from the rig, so they are left alone. See [full-body-research.md](full-body-research.md).
@@ -158,6 +160,7 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `fullBody.bones.<name>.tip` | Far end of that segment `[x,y]`, px; must differ from the pivot. |
 | `fullBody.bones.<name>.radius` | Influence width, px; about half the limb width. |
 | `fullBody.bones.<name>.maxBend` | Rotation in radians at pose +1. Positive rotates a downward tip toward image-left, so the image-right limb uses a negative value to swing outward. |
+| `fullBody.fingers.L` / `fullBody.fingers.R` | Optional. A polyline of `[x, y]` points, px, from the wrist outward, at least two points. Each step is a hinge parented to the wrist. Omit both and the hand stays one bone. |
 
 Draft validation accepts omitted `x0/x1/top/bot` only as a complete group; supplying some of
 the four fields is an error. Complete rigs always require all four. Changing eye geometry

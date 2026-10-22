@@ -17,6 +17,28 @@ export interface MeshAvatarOptions {
   fit?: 'contain' | 'cover';
   preserveMouthForm?: boolean;
 }
+export interface SkeletonJointPose { swing: number; twist: number }
+export interface SkeletonPose {
+  joints: Record<string, SkeletonJointPose>;
+  drawOrder: Record<string, number>;
+}
+export interface SkeletonPoseFile extends SkeletonPose {
+  format: 'mesh-avatar-pose';
+  version: 1;
+}
+export interface SkeletonIkGoal {
+  /** `handL`, `handR`, `footL`, `footR`, `head`, or a joint name when `root` is set. */
+  effector: string;
+  target: [number, number];
+  root?: string;
+  method?: 'ccd' | 'fabrik';
+  iterations?: number;
+}
+export interface UncoveredRegion {
+  joint: string;
+  swing: number;
+  polygon: [number, number][];
+}
 export interface MeshAvatar {
   readonly motions: { id: string; label: string; idle: boolean }[];
   readonly imageSize: { width: number; height: number };
@@ -39,6 +61,16 @@ export interface MeshAvatar {
   setAutoIdle(on: boolean): void;
   setAutoMotion(on: boolean): void;
   setSwayGain(gain: number): void;
+  /** Anatomical pose. Null clears it and returns the avatar to the legacy limb sliders. A bust returns null. */
+  setSkeletonPose(pose: SkeletonPose | null): SkeletonPose | null;
+  getSkeletonPose(): SkeletonPose | null;
+  applyPosePreset(name: string): SkeletonPose | null;
+  solveSkeletonIk(goal: SkeletonIkGoal): SkeletonPose | null;
+  poseFromKeypoints(input: unknown, options?: { facing?: 'camera' | 'same' }): SkeletonPose | null;
+  getSkeletonPoseJson(): SkeletonPoseFile | null;
+  loadSkeletonPose(json: unknown): SkeletonPose | null;
+  /** Polygons of the illustration a large swing uncovers. Empty when no anatomical pose is set. */
+  uncoveredRegions(): UncoveredRegion[];
   onMotion(listener: (id: string | null) => void): () => void;
   advance(seconds: number, fps?: number): void;
   advanceParameters(seconds: number): void;

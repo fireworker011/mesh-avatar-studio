@@ -1,4 +1,5 @@
 import { FULL_BODY_BONES, LIMB_PARAMS } from '../rig/bones.js';
+import { buildSkeleton } from '../pose/skeleton.js';
 import { faceDensity } from './renderer.js';
 
 export const PARAMS = [
@@ -104,6 +105,14 @@ export function createRig(rig) {
   const FACE = faceDensity(rig).scale;
   const PARENT = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.parent]));
   const PARAM_OF = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.param]));
+  // Extra spine, neck, clavicle and finger bones exist only for an anatomical pose.
+  // A bust, and a full-body pose that never sets skeletonAngles, never reads them.
+  const SKELETON = buildSkeleton(rig);
+  const BONES = FULL ? { ...FULL.bones, ...(SKELETON?.extraBones ?? {}) } : null;
+  const boneOf = name => BONES?.[name];
+  const parentOf = (name, P) => P?.skeletonParents && Object.prototype.hasOwnProperty.call(P.skeletonParents, name)
+    ? P.skeletonParents[name]
+    : (PARENT[name] ?? null);
 
   const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -189,18 +198,25 @@ export function createRig(rig) {
     };
     if (FULL) {
       const mask = (1 - weights.head) ** 2;
-      const hits = [];
-      let sum = 0;
-      for (const bone of FULL_BODY_BONES) {
-        const limb = FULL.bones[bone.name];
-        if (!limb) continue;
-        const weight = boneWeight(x, y, limb) * mask;
-        if (weight < 0.03) continue;
-        hits.push([bone.name, weight]);
-        sum += weight;
+      const collect = (names, maskFor) => {
+        const hits = [];
+        let sum = 0;
+        for (const name of names) {
+          const limb = boneOf(name);
+          if (!limb) continue;
+          const weight = boneWeight(x, y, limb) * maskFor(name);
+          if (weight < 0.03) continue;
+          hits.push([name, weight]);
+          sum += weight;
+        }
+        const scale = sum > 1 ? 1 / sum : 1;
+        return hits.map(([name, weight]) => [name, weight * scale]);
+      };
+      weights.limbs = collect(FULL_BODY_BONES.map(bone => bone.name), () => mask);
+      if (SKELETON) {
+        const headNames = new Set(SKELETON.headNames);
+        weights.skeletonLimbs = collect(SKELETON.limbNames, name => headNames.has(name) ? 1 : mask);
       }
-      const scale = sum > 1 ? 1 / sum : 1;
-      weights.limbs = hits.map(([name, weight]) => [name, weight * scale]);
     }
     return weights;
   }
@@ -242,14 +258,19 @@ export function createRig(rig) {
   }
 
   function localAngle(name, P, phys) {
-    const bone = FULL?.bones[name];
+    const bone = boneOf(name);
     if (!bone) return phys.limbs?.[name] ?? 0;
-    return (P[PARAM_OF[name]] ?? 0) * bone.maxBend + (phys.limbs?.[name] ?? 0);
+    if (P.skeletonAngles && Object.prototype.hasOwnProperty.call(P.skeletonAngles, name)) {
+      return P.skeletonAngles[name] + (phys.limbs?.[name] ?? 0);
+    }
+    const param = PARAM_OF[name];
+    if (!param) return phys.limbs?.[name] ?? 0;
+    return (P[param] ?? 0) * bone.maxBend + (phys.limbs?.[name] ?? 0);
   }
   function posedPivot(name, P, phys, cache) {
     if (cache[name]) return cache[name];
-    const rest = FULL.bones[name].pivot;
-    const parent = PARENT[name];
+    const rest = boneOf(name).pivot;
+    const parent = parentOf(name, P);
     if (!parent) { cache[name] = [rest[0], rest[1]]; return cache[name]; }
     const q = [rest[0], rest[1]];
     applyChain(q, parent, P, phys, cache);
@@ -257,7 +278,7 @@ export function createRig(rig) {
     return q;
   }
   function applyChain(point, name, P, phys, cache) {
-    const parent = PARENT[name];
+    const parent = parentOf(name, P);
     if (parent) applyChain(point, parent, P, phys, cache);
     const angle = localAngle(name, P, phys);
     if (angle !== 0) {
@@ -270,16 +291,17 @@ export function createRig(rig) {
   function boneRigid(name, P, phys, cache) {
     if (cache.rigid[name]) return cache.rigid[name];
     let theta = 0, moving = false;
-    for (let n = name; n; n = PARENT[n]) {
+    for (let n = name; n; n = parentOf(n, P)) {
       const angle = localAngle(n, P, phys);
       if (angle !== 0) moving = true;
       theta += angle;
     }
-    const rest = FULL.bones[name].pivot;
+    const bone = boneOf(name);
+    const rest = bone.pivot;
     const posed = posedPivot(name, P, phys, cache.pivot);
     const c = Math.cos(theta), s = Math.sin(theta);
     const rigid = {
-      theta, moving, c, s,
+      name, theta, moving, c, s, posed, radius: bone.radius, restVector: [bone.tip[0] - rest[0], bone.tip[1] - rest[1]],
       tx: posed[0] - (c * rest[0] - s * rest[1]),
       ty: posed[1] - (s * rest[0] + c * rest[1]),
     };
@@ -295,12 +317,14 @@ export function createRig(rig) {
     if (!FULL || !weights?.length) return;
     const cache = { pivot: {}, rigid: {} };
     const used = [];
-    let moving = false, bound = 0;
+    let moving = false, bound = 0, best = null;
     for (const [name, weight] of weights) {
-      if (weight <= 0 || !FULL.bones[name]) continue;
+      if (weight <= 0 || !boneOf(name)) continue;
       const rigid = boneRigid(name, P, phys, cache);
       if (rigid.moving) moving = true;
-      used.push({ rigid, weight });
+      const item = { rigid, weight };
+      used.push(item);
+      if (!best || weight > best.weight) best = item;
       bound += weight;
     }
     if (!moving || bound <= 0 || !used.length) return;
@@ -339,8 +363,33 @@ export function createRig(rig) {
     const qy = s * point[0] + c * point[1] + ty;
     const joint = bound > 0 ? 1 - dominant / Math.max(bound, dominant) : 0;
     const mix = joint * 0.2;
-    point[0] = qx * (1 - mix) + lx * mix;
-    point[1] = qy * (1 - mix) + ly * mix;
+    let x = qx * (1 - mix) + lx * mix, y = qy * (1 - mix) + ly * mix;
+    // Volume and twist run only for an anatomical pose. The legacy slider path
+    // returns the dual-quaternion point above, which the hinge regression measures.
+    if (P.skeletonAngles && best) {
+      const pinch = 1 - Math.cos(Math.min(Math.abs(best.rigid.theta), Math.PI));
+      const band = best.rigid.radius * 0.55;
+      const px = best.rigid.posed[0], py = best.rigid.posed[1];
+      const dx = x - px, dy = y - py, dist = Math.hypot(dx, dy);
+      if (pinch > 0.05 && dist > 1 && dist < band) {
+        const push = pinch * 0.18 * (1 - dist / band) * best.rigid.radius;
+        x += dx / dist * push; y += dy / dist * push;
+      }
+      const tw = P.skeletonTwist?.[best.rigid.name] || 0;
+      if (tw) {
+        const rv = best.rigid.restVector;
+        const c = best.rigid.c, s = best.rigid.s;
+        const ax = rv[0] * c - rv[1] * s, ay = rv[0] * s + rv[1] * c;
+        const len = Math.hypot(ax, ay) || 1;
+        const ux = ax / len, uy = ay / len;
+        const rx = x - px, ry = y - py;
+        const along = rx * ux + ry * uy;
+        const foreshorten = Math.cos(tw);
+        x = px + along * ux + (rx - along * ux) * foreshorten;
+        y = py + along * uy + (ry - along * uy) * foreshorten;
+      }
+    }
+    point[0] = x; point[1] = y;
   }
 
   // Base layer: hair and face-part offsets are added in rest space, then head, then body.
@@ -373,7 +422,8 @@ export function createRig(rig) {
       - ax * FACE * 9 * w.earR + ax * FACE * 4 * w.earL - ax * FACE * 10 * (w.bunL + w.bunR);
     p[1] -= ay * FACE * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
-    if (w.limbs?.length) applyLimbs(p, w.limbs, P, phys);
+    const limbs = P.skeletonAngles ? w.skeletonLimbs : w.limbs;
+    if (limbs?.length) applyLimbs(p, limbs, P, phys);
     applyHead(p, w.head, P, w.turn);
     applyBody(p, y, P, w.chest, w.breath, w.shoulder);
     return p;

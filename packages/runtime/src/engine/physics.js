@@ -67,7 +67,8 @@ export function createPhysics(engine, rig) {
       // Bust anchors stay head + body, which is what the physics regression measures.
       // A full-body strand over the torso uses the same limb weights as the mesh.
       if (FULL) {
-        const limbs = baseWeights(at[0], at[1], 0).limbs;
+        const weights = baseWeights(at[0], at[1], 0);
+        const limbs = P.skeletonAngles ? weights.skeletonLimbs : weights.limbs;
         if (limbs?.length) applyLimbs(p, limbs, P, this.out);
       }
       applyHead(p, 1, P);

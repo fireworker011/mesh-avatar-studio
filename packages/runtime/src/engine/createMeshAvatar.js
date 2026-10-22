@@ -1,6 +1,7 @@
 // Mesh avatar engine: turns a pre-split single illustration into a
 // 2D mesh avatar animated on a WebGL2 canvas. No UI and no framework: the app drives it
 // through the small API returned by createMeshAvatar().
+import { buildSkeleton, meshAngles, orderTriangles, poseFromJson, poseFromKeypoints, posePreset, poseToJson, restPose, solveIk, uncoveredWedges } from '../pose/skeleton.js';
 import { createRig } from './rig.js';
 import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
@@ -127,6 +128,21 @@ export async function createMeshAvatarImpl(canvas, options) {
     baseW.push(baseWeights(x, y, hairAt(x, y)));
   }
   R.addLayer('base', imgs.base, baseMesh, { face: true });
+  const skeleton = buildSkeleton(rig);
+  const vertexBone = skeleton ? baseW.map(weights => {
+    let best = '', weight = 0;
+    for (const [name, value] of weights.skeletonLimbs ?? []) if (value > weight) { best = name; weight = value; }
+    return best;
+  }) : [];
+  let skeletonBinding = null, drawKey = '';
+  function applyDrawOrder() {
+    if (!skeleton) return;
+    const depth = skeletonBinding?.drawOrder ?? {};
+    const key = JSON.stringify(depth);
+    if (key === drawKey) return;
+    drawKey = key;
+    R.setTriangleOrder('base', orderTriangles(baseMesh.tris, vertexBone, depth));
+  }
 
   // eyes: white+iris clipped by the lids, then the line layers on top
   const eyeParts = [];
@@ -183,6 +199,11 @@ export async function createMeshAvatarImpl(canvas, options) {
       if (!options.preserveMouthForm || parameters.mouthForm === undefined) P.mouthForm = motion.P.mouthForm;
     }
     // Live expressions sit above tracking and lip sync; neutral leaves the parameters untouched.
+    if (skeletonBinding) {
+      P.skeletonAngles = skeletonBinding.angles;
+      P.skeletonParents = skeletonBinding.parents;
+      P.skeletonTwist = skeletonBinding.twists;
+    }
     const out = expression.apply(P, dt);
     lastParameters = out;
     return out;
@@ -254,6 +275,22 @@ export async function createMeshAvatarImpl(canvas, options) {
     imageSize: { width: IMG.w, height: IMG.h },
     fullBody: !!rig.fullBody,
     setParameters(values, weight = 1) { parameters = { ...values }; parameterWeight = Math.min(1, Math.max(0, Number(weight) || 0)); },
+    setSkeletonPose(pose) {
+      if (!skeleton) return null;
+      skeletonBinding = pose ? meshAngles(skeleton, pose) : null;
+      applyDrawOrder();
+      return skeletonBinding?.pose ?? null;
+    },
+    getSkeletonPose() { return skeletonBinding?.pose ?? null; },
+    applyPosePreset(name) { return skeleton ? this.setSkeletonPose(posePreset(skeleton, name)) : null; },
+    solveSkeletonIk(goal) {
+      if (!skeleton) return null;
+      return this.setSkeletonPose(solveIk(skeleton, skeletonBinding?.pose ?? restPose(skeleton), goal));
+    },
+    poseFromKeypoints(input, options) { return skeleton ? this.setSkeletonPose(poseFromKeypoints(skeleton, input, options)) : null; },
+    getSkeletonPoseJson() { return this.getSkeletonPose() ? poseToJson(this.getSkeletonPose()) : null; },
+    loadSkeletonPose(json) { return skeleton ? this.setSkeletonPose(poseFromJson(skeleton, json)) : null; },
+    uncoveredRegions() { return skeleton && skeletonBinding ? uncoveredWedges(skeleton, skeletonBinding.pose) : []; },
     getParameters() { return { ...lastParameters }; },
     /** 0..1 loudness of the voice being played (e.g. normalised RMS). */
     setVoiceLevel(v) { motion.setVoiceLevel(v); },

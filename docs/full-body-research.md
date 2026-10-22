@@ -71,7 +71,7 @@ The weighted-mesh idea (a vertex follows more than one bone, and only near a joi
 
 - <https://github.com/DragonBones/DragonBonesJS> — MIT. Mesh deformation and skinning are documented as vertices attached to bones: <https://github.com/DragonBones/DragonBonesJS>, <https://dragonbones.github.io/en/animation.html>
 
-Same public idea as Spine: bone weights drive mesh vertices, and inverse kinematics is a separate editor tool. No DragonBones source is included. Inverse kinematics was not added; the pose sliders and the detected joints already set the bone angles.
+Same public idea as Spine: bone weights drive mesh vertices, and inverse kinematics is a separate editor tool. No DragonBones source is included. The later anatomical pose (joint limits, CCD and FABRIK, presets, OpenPose/COCO JSON) is documented in [pose-system-issues.md](pose-system-issues.md). It does not import DragonBones, Spine, or any other solver.
 
 ### Live2D Cubism
 

@@ -7,6 +7,7 @@ import { useI18n } from './i18n';
 import { isTallImage } from './viewport';
 import { Icon } from './Icon';
 import { openSampleAvatar } from './project';
+import { SkeletonControls } from './SkeletonControls';
 
 const defaults: Record<string, number> = Object.fromEntries(PARAMS.map(p => [p.id, p.def]));
 const limbSliders = [
@@ -46,6 +47,7 @@ export function Preview({ projectKey, rig, assets, hasMouthSprites, onDrawMouth 
   const [loop, setLoop] = useState(false);
   const [liveMouth, setLiveMouth] = useState(0);
   const [tab, setTab] = useState<'pose' | 'lip'>('pose');
+  const [poseEpoch, setPoseEpoch] = useState(0);
   const [lightingOpen, setLightingOpen] = useState(false);
   const skipped = skippedKanaCharacters(text).join(' ');
   const controls = useRef({ idle, stress, parameters });
@@ -150,6 +152,7 @@ export function Preview({ projectKey, rig, assets, hasMouthSprites, onDrawMouth 
           </label>
         ))}
       </div>
+      {rig.fullBody && <SkeletonControls rig={rig} avatar={avatar.current} revision={revision} poseEpoch={poseEpoch} onPose={() => avatar.current?.advance(0)} />}
       {rig.fullBody && <details className="limb-sliders"><summary>{t.limbPose}</summary>
         {limbSliders.map(slider => (
           <label key={slider.id}>{t[slider.label]}
@@ -160,7 +163,7 @@ export function Preview({ projectKey, rig, assets, hasMouthSprites, onDrawMouth 
           </label>
         ))}
       </details>}
-      <div className="pose-actions"><button className="reset-pose" onClick={() => { setParameters({}); setStress(false); setLip(null); }}>{t.reset}</button>
+      <div className="pose-actions"><button className="reset-pose" onClick={() => { setParameters({}); setStress(false); setLip(null); avatar.current?.setSkeletonPose(null); setPoseEpoch(current => current + 1); }}>{t.reset}</button>
       <button className="sweep-button" title={t.sweepTip} onClick={() => setStress(current => !current)}>{stress ? t.stopSweep : t.sweep}</button></div>
       </div>
       <div className="lip-sync" id="lip-panel" role="tabpanel" aria-labelledby="lip-tab" hidden={tab !== 'lip'}>
