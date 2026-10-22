@@ -37,7 +37,7 @@ const en = {
   poseDetected: 'Joints placed. Drag one, or nudge it with the arrow keys.', poseMissed: 'No pose found. Try Outline, or drag the joints.',
   poseFailed: 'Joint detection could not run. Drag the joints by hand.',
   poseDetector: 'Pose detector', poseAuto: 'Auto', posePhoto: 'Photo', poseLine: 'Line art', poseOutline: 'Outline',
-  mirrorLimbs: 'Mirror left to right', photoSample: 'Illustration pose sample',
+  mirrorLimbs: 'Mirror left to right', photoSample: 'Illustration pose sample', vestSample: 'Vest full-body sample',
   shortcutNudge: 'Nudge the selected joint', nudgeKeys: 'Arrow keys · Shift for 10 px',
   limbPose: 'Limb pose', torsoBend: 'Torso', hipSway: 'Hips', armL: 'Left arm', armR: 'Right arm',
   forearmL: 'Left forearm', forearmR: 'Right forearm', thighL: 'Left thigh', thighR: 'Right thigh',
@@ -88,7 +88,7 @@ const ja: typeof en = {
   poseDetected: '関節を配置しました。ドラッグするか、矢印キーで少しずつ動かしてください。', poseMissed: '姿勢を見つけられませんでした。「輪郭」を試すか、関節を手で合わせてください。',
   poseFailed: '関節の検出を実行できませんでした。関節を手で合わせてください。',
   poseDetector: '姿勢の検出方法', poseAuto: '自動', posePhoto: '写真', poseLine: '線画', poseOutline: '輪郭',
-  mirrorLimbs: '左を右へコピー', photoSample: 'イラスト姿勢サンプル',
+  mirrorLimbs: '左を右へコピー', photoSample: 'イラスト姿勢サンプル', vestSample: 'ベストの全身サンプル',
   shortcutNudge: '選択中の関節を微調整', nudgeKeys: '矢印キー · Shiftで10画素',
   limbPose: '手足のポーズ', torsoBend: '胴', hipSway: '腰', armL: '左の腕', armR: '右の腕',
   forearmL: '左の前腕', forearmR: '右の前腕', thighL: '左の太もも', thighR: '右の太もも',
@@ -112,9 +112,10 @@ const ja: typeof en = {
 };
 const zh: typeof en = { ...workflowZh, ...uiZh };
 export const dictionaries = { en, ja, zh };
-export function sampleLabel(name: string | undefined, labels: { fullBodySample: string; photoSample: string; sampleProject: string }): string | null {
+export function sampleLabel(name: string | undefined, labels: { fullBodySample: string; photoSample: string; vestSample: string; sampleProject: string }): string | null {
   if (name === 'sample-full-body') return labels.fullBodySample;
   if (name === 'sample-full-body-photo') return labels.photoSample;
+  if (name === 'sample-full-body-vest') return labels.vestSample;
   if (name === 'sample-miko-qipao') return labels.sampleProject;
   return null;
 }

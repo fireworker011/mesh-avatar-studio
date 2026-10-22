@@ -16,6 +16,7 @@ const SAMPLES: Record<string, string> = {
   'sample-miko-qipao': 'samples/miko-qipao',
   'sample-full-body': 'samples/full-body',
   'sample-full-body-photo': 'samples/full-body-photo',
+  'sample-full-body-vest': 'samples/full-body-vest',
 };
 const SAMPLE = 'sample-miko-qipao';
 const displayPath = (path: string) => path === homedir() ? '~' : path.startsWith(`${homedir()}${sep}`) ? `~${path.slice(homedir().length)}` : path;
