@@ -15,6 +15,14 @@
 - The model is unmodified. Same Apache-2.0 license as the face landmarker.
 - The editor’s Detect joints button loads it from `/mediapipe/pose_landmarker_lite.task`. No CDN request is made.
 
+## Hand Landmarker
+
+- Asset: `hand_landmarker.task`, Hand Landmarker float16.
+- Source: https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+- SHA-256: `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`
+- The model is unmodified. Same Apache-2.0 license as the face landmarker.
+- The live camera loop loads it from `/mediapipe/hand_landmarker.task` next to the pose model. No CDN request is made.
+
 The runtime uses `@mediapipe/tasks-vision` version **0.10.21**, pinned in `package.json`
 and `package-lock.json`. Its JavaScript and WASM are licensed under Apache-2.0.
 Vite serves the installed WASM files at `/mediapipe/` and includes them, this model,

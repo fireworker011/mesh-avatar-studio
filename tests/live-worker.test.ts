@@ -24,7 +24,7 @@ test('worker falls back from GPU to CPU, keeps frames local and closes both acce
   await scope.onmessage({ data: { type: 'frame', frame, timestamp: 0 } });
   await scope.onmessage({ data: { type: 'frame', frame, timestamp: 0 } });
   expect(detectForVideo).toHaveBeenCalledTimes(1); expect(frame.close).toHaveBeenCalledTimes(2);
-  expect(postMessage).toHaveBeenCalledWith({ type: 'result', elapsed: 0, result: { ...result, faceLandmarks: [[]] } });
+  expect(postMessage).toHaveBeenCalledWith({ type: 'result', elapsed: 0, result: { ...result, faceLandmarks: [[]], poseLandmarks: [], hands: [] } });
   detectForVideo.mockImplementation(() => { throw new Error('Bad frame'); }); now.mockReturnValue(40);
   await scope.onmessage({ data: { type: 'frame', frame, timestamp: 40 } });
   expect(frame.close).toHaveBeenCalledTimes(3); expect(postMessage).toHaveBeenCalledWith({ type: 'error' });

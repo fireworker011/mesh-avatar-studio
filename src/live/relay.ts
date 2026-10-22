@@ -1,13 +1,13 @@
 import { LIGHTING_EVENT, lightingWire, lightingMessage, lightingValue } from '../lighting/protocol';
 import type { LightingSettings } from 'mesh-avatar';
-import { LIVE_EVENT, liveMessage } from './protocol';
+import { LIVE_EVENT, liveMessage, type LivePoseWire } from './protocol';
 import { EXPRESSION_EVENT, LIGHTING_PRESET_EVENT, expressionMessage, lightingPresetMessage, type RemoteExpression } from './expression-protocol';
 
 export function createLiveSender(project: string, sender = randomSender()) {
   let sent = -Infinity;
-  return (params: Record<string, number>, now: number) => {
+  return (params: Record<string, number>, now: number, pose?: LivePoseWire | null) => {
     if (!import.meta.hot || now - sent < 1000 / 60) return;
-    const message = liveMessage({ project, params, t: now, sender });
+    const message = liveMessage({ project, params, t: now, sender, ...(pose !== undefined ? { pose } : {}) });
     if (message) { import.meta.hot.send(LIVE_EVENT, message); sent = now; }
   };
 }

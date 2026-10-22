@@ -13,6 +13,7 @@ export function mediapipeAssets(root: string, prefix = '/'): Plugin {
       .map(name => [name, resolve(root, 'node_modules/@mediapipe/tasks-vision/wasm', name)] as const),
     ['face_landmarker.task', resolve(root, 'vendor/mediapipe/face_landmarker.task')],
     ['pose_landmarker_lite.task', resolve(root, 'vendor/mediapipe/pose_landmarker_lite.task')],
+    ['hand_landmarker.task', resolve(root, 'vendor/mediapipe/hand_landmarker.task')],
     ['LICENSE', resolve(root, 'vendor/mediapipe/LICENSE')],
     ['README.md', resolve(root, 'vendor/mediapipe/README.md')],
   ]);
