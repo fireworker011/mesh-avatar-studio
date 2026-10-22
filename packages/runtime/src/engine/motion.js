@@ -93,6 +93,7 @@ export class Motion {
     this.voiceTrough = 0;
     this.kana = null;
     this.lipHold = null;
+    this.viseme = null;            // microphone vowel, or 'm' while the lips are closed
     this.emotionUntil = 0;         // when the emotion face goes back to normal
     this.talkGain = 1;             // how much the head moves along with the voice
     this.play = null;              // { id, t } of the motion being played
@@ -137,13 +138,18 @@ export class Motion {
     this.kana = moras.length ? { moras, t: 0, loop, duration: moras.reduce((sum, m) => sum + m.dur, 0) } : null;
   }
 
+  /** `a` `i` `u` `e` `o`, `m` for a bilabial close, or null to leave the mouth alone. */
+  setViseme(vowel) {
+    this.viseme = vowel === 'm' || Object.hasOwn(VOWELS, vowel) ? vowel : null;
+  }
+
   holdMouth(vowel) {
     this.kana = null;
     this.lipHold = Object.hasOwn(VOWELS, vowel) ? vowel : null;
   }
 
   stopLipSync() {
-    this.kana = null; this.lipHold = null; this.lipOpen = null; this.mouth = 0;
+    this.kana = null; this.lipHold = null; this.viseme = null; this.lipOpen = null; this.mouth = 0;
   }
 
   getLipSyncState() {
@@ -169,6 +175,21 @@ export class Motion {
       const k = m.open > this.mouth ? 1 - Math.exp(-dt * 30) : 1 - Math.exp(-dt * 22);
       this.mouth += (m.open - this.mouth) * k;
       if (m.form !== null) this.vowelForm = m.form;
+      return [this.mouth, this.vowelForm];
+    }
+    // A detected vowel owns the mouth. A bilabial stays nearly shut and keeps the last shape.
+    // Quiet speech still opens far enough for the drawn vowel to show.
+    if (this.viseme && this.speaking) {
+      const closed = this.viseme === 'm';
+      const name = closed ? (this.vowel || 'a') : this.viseme;
+      const shape = VOWELS[name] ?? VOWELS.a;
+      if (!closed) this.vowel = name;
+      const level = Math.min(1, Math.pow(Math.max(0, this.voice), 0.7) * 1.15);
+      const shaped = 0.45 + 0.55 * shape.open / 0.9;
+      const target = closed ? 0.02 : Math.min(0.95, Math.max(level, 0.62)) * shaped;
+      const rate = target > this.mouth ? 1 - Math.exp(-dt * 40) : 1 - Math.exp(-dt * 32);
+      this.mouth += (target - this.mouth) * rate;
+      if (!closed && shape.form !== null) this.vowelForm = shape.form;
       return [this.mouth, this.vowelForm];
     }
     const v = this.speaking ? this.voice : 0;

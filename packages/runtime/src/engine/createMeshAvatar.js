@@ -326,6 +326,8 @@ export async function createMeshAvatarImpl(canvas, options) {
     setVoiceLevel(v) { motion.setVoiceLevel(v); },
     /** true while TTS audio is playing: idle motions pause and the head nods along. */
     setSpeaking(on) { motion.setSpeaking(on); },
+    /** Microphone vowel (`a` `i` `u` `e` `o`), `m` while the lips close, or null. */
+    setViseme(vowel) { motion.setViseme(vowel); },
     /** AITuber OnAir emotion tag: happy / sad / angry / surprised / relaxed / neutral (or null). */
     setEmotion(tag, opts) { motion.setEmotion(tag, opts); },
     /** Live expression layered over tracking (see OVERLAY_EXPRESSIONS); 'neutral' clears it. */

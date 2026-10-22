@@ -53,6 +53,8 @@ export interface MeshAvatar {
   getParameters(): Record<string, number>;
   setVoiceLevel(value: number): void;
   setSpeaking(on: boolean): void;
+  /** Microphone vowel. `m` closes the lips. Null returns the mouth to the camera or to volume lip sync. */
+  setViseme(vowel: 'a' | 'i' | 'u' | 'e' | 'o' | 'm' | null): void;
   setEmotion(tag: string | null, options?: { playMotion?: boolean }): void;
   setExpression(name: LiveExpression): void;
   getExpression(): { name: LiveExpression; active: boolean };

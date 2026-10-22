@@ -142,6 +142,7 @@ export class MicrophoneCapture {
   private context?: AudioContext;
   private analyser?: AnalyserNode;
   private samples = new Float32Array(1024);
+  private bins = new Float32Array(512);
   constructor(private onState: (state: MicState) => void) {}
   stop() {
     this.generation++;
@@ -160,6 +161,7 @@ export class MicrophoneCapture {
       await context.resume();
       if (generation !== this.generation) return;
       this.analyser = context.createAnalyser(); this.analyser.fftSize = this.samples.length;
+      this.bins = new Float32Array(this.analyser.frequencyBinCount);
       context.createMediaStreamSource(stream).connect(this.analyser);
       // Never connect to the audio output or record the captured samples.
       this.onState('micOn');
@@ -172,5 +174,12 @@ export class MicrophoneCapture {
     if (!this.analyser) return 0;
     this.analyser.getFloatTimeDomainData(this.samples);
     return rmsLevel(this.samples, gain);
+  }
+  /** Decibel bins for vowel detection. The stream is never sent to the speakers. */
+  spectrum(gain: number) {
+    if (!this.analyser || !this.context) return null;
+    this.analyser.getFloatTimeDomainData(this.samples);
+    this.analyser.getFloatFrequencyData(this.bins);
+    return { bins: this.bins, sampleRate: this.context.sampleRate, fftSize: this.analyser.fftSize, rms: rmsLevel(this.samples, gain) };
   }
 }

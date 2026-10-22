@@ -1,4 +1,5 @@
 export { createMeshAvatar, LIVE_EXPRESSIONS } from './engine';
+export { vowelFromSpectrum, createVisemeTracker } from './engine/viseme.js';
 export type { MeshAvatar, MeshAvatarOptions, LiveExpression, SkeletonPose, SkeletonPoseFile, SkeletonJointPose, SkeletonIkGoal, UncoveredRegion } from './engine';
 export { CLINICAL_DEG, IK_CHAINS, PRESET_NAMES, buildSkeleton, restPose, clampPose, forwardKinematics, solveCcd, solveFabrik, solveIk, posePreset, poseToJson, poseFromJson, poseFromKeypoints, trackSkeleton, plantFeet, uncoveredWedges, orderTriangles, meshAngles, jointLimits } from './pose/skeleton.js';
 export type { Rig, Eye, Strand, Accessory, Hand, Ellipse, Point, Band, FullBody, LimbBone, FullBodyBoneName } from './rig/types';

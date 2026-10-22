@@ -1,5 +1,5 @@
 import { LightingControls, LightHandle, lightingText } from '../lighting/Controls';
-import { colorHex, LIVE_EXPRESSIONS, type LiveExpression, type MeshAvatar } from 'mesh-avatar';
+import { colorHex, createVisemeTracker, LIVE_EXPRESSIONS, type LiveExpression, type MeshAvatar } from 'mesh-avatar';
 import { loadLighting, saveLighting } from '../lighting/storage';
 import { loadLightingPresets, sameLighting, saveLightingPresets } from '../lighting/presets';
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +8,7 @@ import { createAvatarView } from './avatar-view';
 import { viewSettings, streamUrl, backgroundColor } from './settings';
 import { FacePose, type TrackingOptions } from './tracking';
 import { BodyDriver } from './body-pose';
+import { driveSpeech } from './speech-source';
 import { CameraCapture, MicrophoneCapture, type CameraState, type MicState, type BackgroundTracking } from './media';
 import { liveText } from './i18n';
 import { Icon } from '../editor/Icon';
@@ -38,6 +39,7 @@ export function LiveApp() {
   const avatarRef = useRef<MeshAvatar | null>(null);
   const lightRef = useRef(settings.lighting); lightRef.current = settings.lighting;
   const pose = useRef(new FacePose());
+  const viseme = useRef(createVisemeTracker());
   const body = useRef(new BodyDriver());
   const controls = useRef({ options, gain, micState, cameraState }); controls.current = { options, gain, micState, cameraState };
   const refreshDevices = () => { void navigator.mediaDevices?.enumerateDevices().then(setDevices).catch(() => undefined); };
@@ -65,9 +67,9 @@ export function LiveApp() {
       setTracking(sampled.tracking);
       avatar.setAutoIdle(!sampled.tracking); avatar.setAutoMotion(!sampled.tracking);
       body.current.apply(avatar, now, dt, control.options);
-      avatar.setParameters(sampled.params, sampled.weight);
       const micOn = control.micState === 'micOn';
-      avatar.setSpeaking(micOn); avatar.setVoiceLevel(micOn ? microphone.current?.level(control.gain) ?? 0 : 0);
+      driveSpeech(avatar, sampled.params, { micOn, frame: micOn ? microphone.current?.spectrum(control.gain) ?? null : null, dt }, viseme.current);
+      avatar.setParameters(sampled.params, sampled.weight);
     }, (avatar, now) => {
       // An expression alone also drives the stream view, including its fade back to neutral.
       if (controls.current.cameraState === 'running' || controls.current.micState === 'micOn' || avatar.getExpression().active) send(avatar.getParameters(), now, avatar.fullBody ? avatar.getSkeletonPoseJson() : undefined);
