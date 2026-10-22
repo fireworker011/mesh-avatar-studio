@@ -1,0 +1,27 @@
+import { expect, test } from '@playwright/test';
+import { dismissGuide, samplePresent, sampleSkipReason } from './sample';
+
+test('full-body sample opens tall and bust sample stays a square bust', async ({ page }) => {
+  test.skip(!samplePresent, sampleSkipReason);
+  await page.goto('/');
+  await dismissGuide(page);
+  await expect(page.getByTestId('preview-status')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-tall', 'false');
+  await expect(page.getByTestId('detect-pose')).toHaveCount(0);
+  await expect(page.getByTestId('part-fullBody')).toBeDisabled();
+  await page.locator('.open-menu > summary').click();
+  await page.getByTestId('project-sample-full-body').click();
+  await expect(page.getByTestId('project-location').locator('strong')).toHaveText('Full-body sample');
+  await expect(page.getByTestId('preview-status')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-tall', 'true');
+  await expect(page.getByTestId('preview')).toHaveAttribute('data-tall', 'true');
+  await page.getByTestId('part-fullBody').click();
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-focus-group', 'fullBody');
+  await expect(page.getByTestId('detect-pose')).toBeEnabled();
+  await page.locator('.open-menu > summary').click();
+  await page.getByTestId('project-sample-miko-qipao').click();
+  await expect(page.getByTestId('project-location').locator('strong')).toHaveText('Sample project');
+  await expect(page.getByTestId('editor')).toHaveAttribute('data-tall', 'false');
+  await expect(page.getByTestId('detect-pose')).toHaveCount(0);
+  await expect(page.getByTestId('part-fullBody')).toBeDisabled();
+});

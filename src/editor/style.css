@@ -111,6 +111,9 @@ main:has(.project-location):has(.stale) .editor-panel { height: calc(100dvh - 21
 .right-column { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .preview-panel { overflow: hidden; flex-shrink: 0; }
 .preview-canvas { display: block; height: 420px; width: auto; max-width: 100%; margin: 0 auto; }
+.preview-canvas[data-tall='true'] { height: auto; width: auto; max-width: min(100%, 220px); max-height: min(58dvh, 520px); }
+.limb-sliders { margin: 4px 0 8px; }
+.limb-sliders summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .preview-tools { display: flex; align-items: center; gap: 8px; padding: 2px 16px; border-top: 1px solid var(--line); font-size: 12px; }
 .preview-tools .icon-button { width: 28px; height: 28px; border: 0; color: var(--accent); }
 .pose-test { position: relative; padding: 8px 16px; }

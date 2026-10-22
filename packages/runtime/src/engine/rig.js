@@ -1,3 +1,5 @@
+import { FULL_BODY_BONES, LIMB_PARAMS } from '../rig/bones.js';
+
 export const PARAMS = [
   { id: 'angleX', label: 'Face angle X', min: -30, max: 30, def: 0, group: 'Head and body' },
   { id: 'angleY', label: 'Face angle Y', min: -30, max: 30, def: 0, group: 'Head and body' },
@@ -18,6 +20,7 @@ export const PARAMS = [
   { id: 'armAngle', label: 'Arm angle', min: -10, max: 10, def: 0, group: 'Hand' },
   { id: 'handAngle', label: 'Wrist angle', min: -10, max: 10, def: 0, group: 'Hand' },
   { id: 'fingerTap', label: 'Finger tap', min: 0, max: 1, def: 0, group: 'Hand' },
+  ...LIMB_PARAMS.map(param => ({ id: param.id, label: param.label, min: -1, max: 1, def: 0, group: 'Full body' })),
 ];
 
 // Reference algorithms are intentionally retained as JavaScript; the factory's rig input
@@ -94,6 +97,9 @@ export function createRig(rig) {
   // face so its rim falls in the background, and its slope is zero at the rim.
   const HEAD = rig.head;
   const BODY = rig.body;
+  const FULL = rig.fullBody ?? null;
+  const PARENT = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.parent]));
+  const PARAM_OF = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.param]));
 
   const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -138,8 +144,19 @@ export function createRig(rig) {
 
   // Per-vertex weights of the base layer, computed once from the rest position.
   // hair: 0..1 from hairmask.png, so strands only move actual hair.
+  function boneWeight(x, y, bone) {
+    const ax = bone.pivot[0], ay = bone.pivot[1], bx = bone.tip[0], by = bone.tip[1];
+    const vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
+    if (len2 < 1 || bone.radius <= 0) return 0;
+    const u = Math.min(1, Math.max(0, ((x - ax) * vx + (y - ay) * vy) / len2));
+    const d = Math.hypot(x - (ax + vx * u), y - (ay + vy * u));
+    const radial = Math.exp(-((d / bone.radius) ** 2));
+    // The parent keeps the joint; this bone owns the segment toward its tip.
+    return radial < 0.02 ? 0 : radial * sstep(0.02, 0.42, u);
+  }
+
   function baseWeights(x, y, hair = 1) {
-    return {
+    const weights = {
       head: headWeight(x, y),
       turn: turnWeight(x, y),
       strands: strandWeights(x, y, hair),
@@ -159,6 +176,22 @@ export function createRig(rig) {
       breath: 1 - sstep(...BODY.breathBand, y),
       shoulder: BODY.shoulders.reduce((sum, area) => sum + gaussian(x, y, area), 0),
     };
+    if (FULL) {
+      const mask = (1 - weights.head) ** 2;
+      const hits = [];
+      let sum = 0;
+      for (const bone of FULL_BODY_BONES) {
+        const limb = FULL.bones[bone.name];
+        if (!limb) continue;
+        const weight = boneWeight(x, y, limb) * mask;
+        if (weight < 0.03) continue;
+        hits.push([bone.name, weight]);
+        sum += weight;
+      }
+      const scale = sum > 1 ? 1 / sum : 1;
+      weights.limbs = hits.map(([name, weight]) => [name, weight * scale]);
+    }
+    return weights;
   }
 
   // Head turn: features near the face centre travel further than the contour.
@@ -197,6 +230,44 @@ export function createRig(rig) {
     rotateAround(p, BODY.pivotX, BODY.pivotY, -P.bodyAngleZ / 10 * BODY.maxRoll * (1 - sstep(...BODY.rollBand, restY)));
   }
 
+  function localAngle(name, P, phys) {
+    const bone = FULL?.bones[name];
+    if (!bone) return phys.limbs?.[name] ?? 0;
+    return (P[PARAM_OF[name]] ?? 0) * bone.maxBend + (phys.limbs?.[name] ?? 0);
+  }
+  function posedPivot(name, P, phys, cache) {
+    if (cache[name]) return cache[name];
+    const rest = FULL.bones[name].pivot;
+    const parent = PARENT[name];
+    if (!parent) { cache[name] = [rest[0], rest[1]]; return cache[name]; }
+    const q = [rest[0], rest[1]];
+    applyChain(q, parent, P, phys, cache);
+    cache[name] = q;
+    return q;
+  }
+  function applyChain(point, name, P, phys, cache) {
+    const parent = PARENT[name];
+    if (parent) applyChain(point, parent, P, phys, cache);
+    const angle = localAngle(name, P, phys);
+    if (angle !== 0) {
+      const pivot = posedPivot(name, P, phys, cache);
+      rotateAround(point, pivot[0], pivot[1], angle);
+    }
+  }
+  // Limb rotations stay in rest space so the existing head and body transforms
+  // still run afterwards. Zero angles leave the point unchanged.
+  function applyLimbs(point, weights, P, phys) {
+    const cache = {};
+    let sx = 0, sy = 0, sw = 0;
+    for (const [name, weight] of weights) {
+      const q = [point[0], point[1]];
+      applyChain(q, name, P, phys, cache);
+      sx += q[0] * weight; sy += q[1] * weight; sw += weight;
+    }
+    point[0] = sx + point[0] * (1 - sw);
+    point[1] = sy + point[1] * (1 - sw);
+  }
+
   // Base layer: hair and face-part offsets are added in rest space, then head, then body.
   function deformBase(x, y, w, P, phys, out) {
     const p = out;
@@ -225,6 +296,7 @@ export function createRig(rig) {
       - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR);
     p[1] -= ay * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
+    if (w.limbs?.length) applyLimbs(p, w.limbs, P, phys);
     applyHead(p, w.head, P, w.turn);
     applyBody(p, y, P, w.chest, w.breath, w.shoulder);
     return p;

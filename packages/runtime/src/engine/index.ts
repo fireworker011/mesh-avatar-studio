@@ -19,6 +19,8 @@ export interface MeshAvatarOptions {
 }
 export interface MeshAvatar {
   readonly motions: { id: string; label: string; idle: boolean }[];
+  readonly imageSize: { width: number; height: number };
+  readonly fullBody: boolean;
   setLighting(settings: Partial<LightingSettings>): void;
   getLightingStats(): { normalMs: number; computedLayers: number; cachedLayers: number };
   setParameters(parameters: Record<string, number>, weight?: number): void;

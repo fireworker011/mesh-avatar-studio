@@ -4,10 +4,21 @@ import { useEffect, useRef, useState } from 'react';
 import { createMeshAvatar, type MeshAvatar, PARAMS, type Rig } from 'mesh-avatar';
 import { VOWELS, skippedKanaCharacters } from '../../packages/runtime/src/engine/kana.js';
 import { useI18n } from './i18n';
+import { isTallImage } from './viewport';
 import { Icon } from './Icon';
 import { openSampleAvatar } from './project';
 
 const defaults: Record<string, number> = Object.fromEntries(PARAMS.map(p => [p.id, p.def]));
+const limbSliders = [
+  { id: 'torsoBend', label: 'torsoBend', min: -1, max: 1, def: 0 },
+  { id: 'hipSway', label: 'hipSway', min: -1, max: 1, def: 0 },
+  { id: 'armL', label: 'armL', min: -1, max: 1, def: 0 },
+  { id: 'armR', label: 'armR', min: -1, max: 1, def: 0 },
+  { id: 'forearmL', label: 'forearmL', min: -1, max: 1, def: 0 },
+  { id: 'forearmR', label: 'forearmR', min: -1, max: 1, def: 0 },
+  { id: 'thighL', label: 'thighL', min: -1, max: 1, def: 0 },
+  { id: 'thighR', label: 'thighR', min: -1, max: 1, def: 0 },
+] as const;
 const sliders = [
   { id: 'angleX', label: 'turn', min: -30, max: 30, def: 0 },
   { id: 'angleY', label: 'look', min: -30, max: 30, def: 0 },
@@ -110,7 +121,7 @@ export function Preview({ projectKey, rig, assets, hasMouthSprites, onDrawMouth 
   return (
     <section className="panel preview-panel">
       <div className="panel-title"><h2>{t.preview}</h2><span role="status" data-testid="preview-status" data-state={status}>{t[status]}</span></div>
-      <div className="lighting-preview"><canvas ref={canvas} data-testid="preview" data-revision={revision} className="preview-canvas"
+      <div className="lighting-preview"><canvas ref={canvas} data-testid="preview" data-revision={revision} data-tall={isTallImage(rig.image.width, rig.image.height) ? 'true' : 'false'} className="preview-canvas"
         style={{ aspectRatio: `${rig.image.width * (1 + 2 * rig.view.padSide)} / ${rig.image.height * (1 + rig.view.padTop)}` }} />
       {lightingOpen && <LightHandle value={lighting} onChange={setLighting} language={language} />}
       </div>
@@ -139,6 +150,16 @@ export function Preview({ projectKey, rig, assets, hasMouthSprites, onDrawMouth 
           </label>
         ))}
       </div>
+      {rig.fullBody && <details className="limb-sliders"><summary>{t.limbPose}</summary>
+        {limbSliders.map(slider => (
+          <label key={slider.id}>{t[slider.label]}
+            <input type="range" aria-label={t[slider.label]} min={slider.min} max={slider.max} step="0.05"
+              value={parameters[slider.id] ?? slider.def}
+              onChange={event => { const value = Number(event.target.value); setParameters(current => ({ ...current, [slider.id]: value })); }} />
+            <output>{(parameters[slider.id] ?? slider.def).toFixed(2)}</output>
+          </label>
+        ))}
+      </details>}
       <div className="pose-actions"><button className="reset-pose" onClick={() => { setParameters({}); setStress(false); setLip(null); }}>{t.reset}</button>
       <button className="sweep-button" title={t.sweepTip} onClick={() => setStress(current => !current)}>{stress ? t.stopSweep : t.sweep}</button></div>
       </div>

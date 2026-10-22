@@ -155,6 +155,11 @@ export function buildOverlay(rig: Rig): { handles: Handle[]; shapes: Shape[] } {
             center[1] + sign * (object.halfLen as number) * Math.sin(object.angle as number)]) });
       }
     }
+    if (group === 'fullBody' && Array.isArray(object.pivot) && Array.isArray(object.tip)
+      && object.pivot.length === 2 && object.tip.length === 2
+      && [...object.pivot, ...object.tip].every(value => typeof value === 'number')) {
+      shapes.push({ item: path, group, kind: 'line', points: [object.pivot as Point, object.tip as Point] });
+    }
     if (typeof object.pivotX === 'number' && typeof object.pivotY === 'number')
       pointHandle(path, group, [object.pivotX, object.pivotY], `${path}.pivotX`, `${path}.pivotY`, `${path}.pivot`);
     if (['x0', 'y0', 'x1', 'y1'].every(key => typeof object[key] === 'number')) {

@@ -1,7 +1,11 @@
+import { FULL_BODY_BONES } from '../rig/bones.js';
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createPhysics(engine, rig) {
   const { applyHead, applyBody, TASSELS, tasselAnchor } = engine;
+  const FULL = rig.fullBody ?? null;
+  const ARM_BONES = FULL_BODY_BONES.filter(bone => bone.param === 'armL' || bone.param === 'armR' || bone.param.startsWith('forearm') || bone.param.startsWith('wrist'));
   const STRANDS = (rig.strands ?? []).map(strand => {
     if (strand.nodes.length === 4) return strand;
     const nodes = Array.from({ length: 4 }, (_, i) => {
@@ -167,6 +171,32 @@ export function createPhysics(engine, rig) {
         const p1 = [A[0] + d1[0] * ch.L1, A[1] + d1[1] * ch.L1];
         ch.pts = [[...A], p1, [p1[0] + d2[0] * ch.L2, p1[1] + d2[1] * ch.L2]];
         ch.anchor = A;
+      }
+      if (FULL) {
+        if (!this.limbState) {
+          this.limbState = Object.fromEntries(ARM_BONES.map(bone => [bone.name, { th: 0, w: 0 }]));
+          this.out.limbs = {};
+        }
+        const follow = FULL.armFollow;
+        for (const bone of ARM_BONES) {
+          const st = this.limbState[bone.name];
+          const level = bone.name.startsWith('upper') ? 0 : bone.name.startsWith('lower') ? 1 : 2;
+          const parent = bone.parent ? this.limbState[bone.parent] : null;
+          const side = bone.name.endsWith('L') ? 1 : -1;
+          const phase = bone.name.endsWith('L') ? 0.4 : 1.7;
+          // Upper arms counter body roll; the forearm and hand lag behind that swing.
+          const followTarget = level === 0 || !parent
+            ? side * (-P.bodyAngleZ / 10) * follow * 0.25
+            : parent.th * 0.65;
+          const target = followTarget
+            + Math.sin(this.time * (1.2 + level * 0.35) + phase) * FULL.sway * (0.04 + level * 0.02);
+          const w0 = 2 * Math.PI * [1.15, 1.7, 2.3][level] / Math.sqrt(Math.max(0.4, g));
+          const step = Math.min(dt, 0.05);
+          st.w += (-w0 * w0 * (st.th - target) - 2 * 0.75 * w0 * st.w) * step;
+          st.th += st.w * step;
+          st.th = Math.max(-0.45, Math.min(0.45, st.th));
+          this.out.limbs[bone.name] = st.th;
+        }
       }
       this.time += dt;
       return this.out;

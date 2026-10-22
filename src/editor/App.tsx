@@ -395,7 +395,7 @@ function Workspace() {
             {projects && <div className="project-list" aria-label={t.localProjects}>
               {projects.length === 0 && <p>{t.noProjects}</p>}
               {projects.map(project => <button key={project.name} className={project.error ? 'unreadable-project' : undefined} disabled={opening || !!project.error} data-testid={`project-${project.name}`} onClick={() => { void openLocal(project); }}>
-                <strong>{project.readOnly ? t.sampleProject : project.name}</strong><small>{project.relativePath}</small>
+                <strong>{project.name === 'sample-full-body' ? t.fullBodySample : project.readOnly ? t.sampleProject : project.name}</strong><small>{project.relativePath}</small>
                 <small>{project.error ? <>{t.unreadableProject} ({project.error.code}) · {project.error.path}</> : <>{t.updated}: {new Date(project.updatedAt).toLocaleString(locale)}
                   {project.hasSprites && <span className="badge">{t.drawnVariants}</span>}{project.readOnly && <span className="badge">{t.readOnly}</span>}{project.hasSource === false && <span className="badge">{sharing.playbackBadge}</span>}</>}</small>
               </button>)}
@@ -421,7 +421,7 @@ function Workspace() {
       </nav>
     </header>
     {(localProject || pickedName) && <div className="project-location" data-testid="project-location">
-      <strong>{localProject?.readOnly ? t.sampleProject : localProject?.name || pickedName}</strong>
+      <strong>{localProject?.name === 'sample-full-body' ? t.fullBodySample : localProject?.readOnly ? t.sampleProject : localProject?.name || pickedName}</strong>
       {localProject && <><CopyButton value={localProject.absolutePath} label={t.copyPath} icon />
       <button className="icon-button" aria-label={navigator.platform.includes('Mac') ? t.showFinder : t.showFolder} title={navigator.platform.includes('Mac') ? t.showFinder : t.showFolder} onClick={() => { void reveal(); }}><Icon name="folder" /></button>
       {localProject.readOnly && <span className="badge">{t.readOnly}</span>}</>}
@@ -452,7 +452,7 @@ function Workspace() {
       <div className="right-column">
         <Preview key={localProject?.name ?? (pickedName || 'sample-miko-qipao')} projectKey={localProject?.name ?? (pickedName || 'sample-miko-qipao')} rig={rig} assets={assets} hasMouthSprites={mouthSprites} onDrawMouth={playbackOnly ? undefined : () => setMouthRequest(value => value + 1)} />
         {!playbackOnly && <VariantsPanel project={localProject} projectPath={localProject?.relativePath ?? (pickedName ? `<${pickedName}>` : 'samples/miko-qipao')} assets={assets} rootPath={rootPath} busy={busy || saving} stale={changed.length > 0} onRun={runJob} mouthRequest={mouthRequest} onMouthPresence={setMouthSprites} />}
-        {!localProject && !pickedName && <details className="panel new-illustration"><summary>{t.newIllustration}</summary><AskAgent newProject rootPath={rootPath} /></details>}
+        {!playbackOnly && <details className="panel new-illustration"><summary>{t.newIllustration}</summary><AskAgent newProject rootPath={rootPath} /></details>}
         {!playbackOnly && <aside className="panel inspector" inert={busy}>
           <div className="selection-heading"><h2>{selectedPart?.[0] ?? t.selection}</h2></div>
           {errorNotice}

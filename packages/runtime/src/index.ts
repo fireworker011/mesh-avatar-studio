@@ -1,7 +1,8 @@
 export { createMeshAvatar, LIVE_EXPRESSIONS } from './engine';
 export type { MeshAvatar, MeshAvatarOptions, LiveExpression } from './engine';
-export type { Rig, Eye, Strand, Accessory, Hand, Ellipse, Point, Band } from './rig/types';
+export type { Rig, Eye, Strand, Accessory, Hand, Ellipse, Point, Band, FullBody, LimbBone, FullBodyBoneName } from './rig/types';
 export { validateRig, parseRig } from './rig/validate';
+export { FULL_BODY_BONES, LIMB_PARAMS } from './rig/bones.js';
 export { PARAMS } from './engine/rig.js';
 export type { LightingSettings } from './lighting/settings';
 export { DEFAULT_LIGHTING, parseLighting, colorHex } from './lighting/settings';

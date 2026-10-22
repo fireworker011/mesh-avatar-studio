@@ -1,4 +1,5 @@
-import type { Rig } from './types';
+import { FULL_BODY_BONES } from './bones.js';
+import type { FullBodyBoneName, Rig } from './types';
 
 type Check = (value: unknown, path: string, errors: string[]) => void;
 const number: Check = (v, p, e) => {
@@ -45,6 +46,8 @@ const unit: Check = (v, p, e) => {
   number(v, p, e);
   if (typeof v === 'number' && (v < 0 || v > 1)) e.push(`${p}: must be between 0 and 1`);
 };
+const limb = object({ pivot: point, tip: point, radius: positive, maxBend: number });
+const boneFields = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, limb]));
 const schema = (draft: boolean) => object({
   version: (v, p, e) => { if (v !== 1) e.push(`${p}: only version 1 is supported`); },
   image: object({ width: integer, height: integer }),
@@ -72,7 +75,8 @@ const schema = (draft: boolean) => object({
     y0: wholeNumber, y1: wholeNumber, cell: integer }), handCell: integer,
     tasselCell: integer, eyeBallCell: integer, eyeCell: integer, spriteCell: integer }),
   view: object({ padTop: number, padSide: number, gazeCenter: point }, ['gazeCenter']),
-}, ['buns', 'strands', 'accessories', 'hand']);
+  fullBody: object({ bones: object(boneFields), sway: unit, armFollow: unit }),
+}, ['buns', 'strands', 'accessories', 'hand', 'fullBody']);
 
 export function validateRig(value: unknown, options: { draft?: boolean } = {}): string[] {
   const errors: string[] = [];
@@ -96,6 +100,13 @@ export function validateRig(value: unknown, options: { draft?: boolean } = {}): 
   for (const [i, strand] of (rig.strands ?? []).entries()) {
     if (strand.nodes.some((p, j) => j > 0 && p[0] === strand.nodes[j - 1][0] && p[1] === strand.nodes[j - 1][1]))
       errors.push(`rig.strands[${i}].nodes: consecutive nodes must differ`);
+  }
+  if (rig.fullBody) {
+    for (const bone of FULL_BODY_BONES) {
+      const limb = rig.fullBody.bones[bone.name as FullBodyBoneName];
+      if (limb.pivot[0] === limb.tip[0] && limb.pivot[1] === limb.tip[1])
+        errors.push(`rig.fullBody.bones.${bone.name}.tip: must differ from pivot`);
+    }
   }
   for (const [i, accessory] of (rig.accessories ?? []).entries()) {
     if (accessory.box[0] < 0 || accessory.box[1] < 0 || accessory.box[2] > rig.image.width || accessory.box[3] > rig.image.height)

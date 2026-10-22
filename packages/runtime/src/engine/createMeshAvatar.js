@@ -139,7 +139,9 @@ export async function createMeshAvatarImpl(canvas, options) {
   if (rig.hand) R.addLayer('hand', imgs.hand, handMesh);
 
   const physics = new Physics();
-  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy]);
+  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy], {
+    fullBody: !!rig.fullBody, sway: rig.fullBody?.sway ?? 0,
+  });
   const listeners = new Set();
   motion.onMotion = id => { for (const fn of listeners) fn(id); };
 
@@ -223,6 +225,8 @@ export async function createMeshAvatarImpl(canvas, options) {
 
   return {
     motions: motionList,
+    imageSize: { width: IMG.w, height: IMG.h },
+    fullBody: !!rig.fullBody,
     setParameters(values, weight = 1) { parameters = { ...values }; parameterWeight = Math.min(1, Math.max(0, Number(weight) || 0)); },
     getParameters() { return { ...lastParameters }; },
     /** 0..1 loudness of the voice being played (e.g. normalised RMS). */

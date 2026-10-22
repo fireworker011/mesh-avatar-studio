@@ -33,6 +33,11 @@ const en = {
   lipSpeed: 'Morae per second', lipLoop: 'Loop', skippedKana: 'Skipped characters:', lipHelp: 'Hiragana, katakana and spaces. Preview only; no audio.',
   sweepTip: 'Swings the head through its full range to find tears',
   turn: 'Turn left/right', look: 'Look up/down', tilt: 'Tilt', eyeOpen: 'Eyes open', mouthOpen: 'Mouth open', bodyTilt: 'Body tilt',
+  fullBodySample: 'Full-body sample', detectPose: 'Detect joints', detectingPose: 'Detecting joints…',
+  poseDetected: 'Joints placed. Drag any that sit in the wrong spot.', poseMissed: 'No pose found. Drag the joints by hand.',
+  poseFailed: 'Joint detection could not run. Drag the joints by hand.',
+  limbPose: 'Limb pose', torsoBend: 'Torso', hipSway: 'Hips', armL: 'Left arm', armR: 'Right arm',
+  forearmL: 'Left forearm', forearmR: 'Right forearm', thighL: 'Left thigh', thighR: 'Right thigh',
   loading: 'Loading local assets…', updating: 'Updating preview…', ready: 'Engine ready', previewError: 'Preview could not load',
   selection: 'Selected part', selectedItem: 'Selected rig item', selectPart: 'Select a part to edit it', tip: 'Tip',
   guideTitle: 'Three steps to your first edit', guide1: 'Pick a part on the left', guide2: 'Drag its dots on the image',
@@ -76,6 +81,11 @@ const ja: typeof en = {
   lipSpeed: '1秒あたりの拍数', lipLoop: '繰り返し', skippedKana: '読み飛ばす文字:', lipHelp: 'ひらがな・カタカナ・空白に対応。音声は再生しません。',
   sweepTip: '頭を最大角度まで動かし、画像の隙間や破れを確認します',
   turn: '顔を左右に向ける', look: '顔を上下に向ける', tilt: '頭を傾ける', eyeOpen: '目の開き', mouthOpen: '口の開き', bodyTilt: '体を傾ける',
+  fullBodySample: '全身サンプル', detectPose: '関節を検出', detectingPose: '関節を検出しています…',
+  poseDetected: '関節を配置しました。ずれた点はドラッグして直してください。', poseMissed: '姿勢を見つけられませんでした。関節を手で合わせてください。',
+  poseFailed: '関節の検出を実行できませんでした。関節を手で合わせてください。',
+  limbPose: '手足のポーズ', torsoBend: '胴', hipSway: '腰', armL: '左の腕', armR: '右の腕',
+  forearmL: '左の前腕', forearmR: '右の前腕', thighL: '左の太もも', thighR: '右の太もも',
   loading: '画像を読み込み中…', updating: 'プレビューを更新中…', ready: 'プレビューの準備完了', previewError: 'プレビューを読み込めませんでした',
   selection: '選択パーツ', selectedItem: '選択するパーツ', selectPart: 'パーツを選んで編集してください', tip: '調整のコツ',
   guideTitle: '最初の編集は3ステップ', guide1: '左の一覧からパーツを選ぶ', guide2: '画像の点をドラッグする',
@@ -96,7 +106,7 @@ const ja: typeof en = {
 };
 const zh: typeof en = { ...workflowZh, ...uiZh };
 export const dictionaries = { en, ja, zh };
-export type PartGroup = 'head' | 'eyes' | 'mouth' | 'face' | 'cheeks' | 'strands' | 'buns' | 'accessories' | 'body' | 'hand' | 'mesh' | 'view';
+export type PartGroup = 'head' | 'eyes' | 'mouth' | 'face' | 'cheeks' | 'strands' | 'buns' | 'accessories' | 'body' | 'fullBody' | 'hand' | 'mesh' | 'view';
 const partText: Record<Language, Record<PartGroup, [string, string, string]>> = {
   zh: partsZh,
   en: {
@@ -109,6 +119,7 @@ const partText: Record<Language, Record<PartGroup, [string, string, string]>> = 
     buns: ['Hair buns', 'Regions that bob as a whole.', 'Fit each circle around a bun without including the face.'],
     accessories: ['Accessories', 'Pendulum parts such as tassels.', 'Place the pivot where the accessory attaches and the tip at its lowest point.'],
     body: ['Body', 'Breathing and body sway.', 'Keep the rotation pivot low and place the breathing region over the chest.'],
+    fullBody: ['Full body', 'Torso, arms, hands, hips, legs and feet.', 'Drag each joint. Detect joints can place them from the picture, then adjust by hand.'],
     hand: ['Hand', 'Hand outline and arm joints.', 'Trace the hand outline, then place the wrist and elbow joints.'],
     mesh: ['Mesh', 'Mesh density.', 'Smaller cells add detail around the face but take more time to render.'],
     view: ['Framing', 'Preview margins.', 'Adjust the margins so the head and accessories stay inside the preview.'],
@@ -123,6 +134,7 @@ const partText: Record<Language, Record<PartGroup, [string, string, string]>> = 
     buns: ['お団子', 'まとまって揺れる範囲。', '顔を含めず、お団子を囲むように円を合わせてください。'],
     accessories: ['飾り', '房飾りなどの振り子。', '付け根に支点を置き、いちばん下に先端を合わせてください。'],
     body: ['体', '呼吸と体の揺れ。', '回転の支点を低い位置に置き、呼吸の範囲を胸に合わせてください。'],
+    fullBody: ['全身', '胴・腕・手・腰・脚・足の関節。', '各関節をドラッグします。「関節を検出」で絵から仮配置し、そのあと手で直せます。'],
     hand: ['手', '手の輪郭と腕の関節。', '手の輪郭をなぞってから、手首と肘の位置を合わせてください。'],
     mesh: ['メッシュ', 'メッシュの細かさ。', '格子を細かくすると顔の表現が細かくなりますが、描画の負荷が増えます。'],
     view: ['表示範囲', 'プレビューの余白。', '頭や飾りがプレビューからはみ出さないように余白を調整してください。'],
@@ -150,6 +162,13 @@ const fieldText: Record<string, [string, string]> = {
   handCell: ['Hand cell size', '手の格子幅'], tasselCell: ['Accessory cell size', '飾りの格子幅'], eyeBallCell: ['Iris cell size', '瞳の格子幅'],
   eyeCell: ['Eye cell size', '目の格子幅'], spriteCell: ['Drawing cell size', '差し替え画像の格子幅'],
   padTop: ['Top margin', '上の余白'], padSide: ['Side margin', '左右の余白'], gazeCenter: ['Gaze centre', '視線の中心'], start: ['Start', '始点'], end: ['End', '終点'],
+  fullBody: ['Full body', '全身'], sway: ['Idle sway', '待機の揺れ'], armFollow: ['Arm follow', '腕の追従'],
+  bones: ['Joints', '関節'], torso: ['Torso', '胴'], hips: ['Hips', '腰'],
+  upperArmL: ['Image-left upper arm', '向かって左の上腕'], lowerArmL: ['Image-left forearm', '向かって左の前腕'], handL: ['Image-left hand', '向かって左の手'],
+  upperArmR: ['Image-right upper arm', '向かって右の上腕'], lowerArmR: ['Image-right forearm', '向かって右の前腕'], handR: ['Image-right hand', '向かって右の手'],
+  upperLegL: ['Image-left thigh', '向かって左の太もも'], lowerLegL: ['Image-left shin', '向かって左のすね'], footL: ['Image-left foot', '向かって左の足'],
+  upperLegR: ['Image-right thigh', '向かって右の太もも'], lowerLegR: ['Image-right shin', '向かって右のすね'], footR: ['Image-right foot', '向かって右の足'],
+  radius: ['Influence radius', '影響の半径'], maxBend: ['Bend at full pose', '最大ポーズの曲がり'],
 };
 export function fieldTitle(path: string, language: Language) {
   const t = dictionaries[language];

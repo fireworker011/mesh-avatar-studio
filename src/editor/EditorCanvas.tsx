@@ -4,7 +4,9 @@ import { buildOverlay, changeVertex, imagePoint, moveHandle, nearestEdge, neares
 import { useI18n, type PartGroup } from './i18n';
 import { PART_COLORS } from './parts';
 import { readPreference, savePreference } from './preferences';
-import { coarseWheel, fitBounds, inputFocused, partBounds, zoomAt } from './viewport';
+import { applyPoseLandmarks } from './pose-landmarks';
+import { detectPoseLandmarks } from './pose-client';
+import { coarseWheel, fitBounds, inputFocused, isTallImage, partBounds, zoomAt } from './viewport';
 
 interface Props {
   rig: Rig;
@@ -34,6 +36,7 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
   const focused = useRef(0);
   const space = useRef(false);
   const [hover, setHover] = useState<{ handle: Handle; point: Point } | null>(null);
+  const [poseState, setPoseState] = useState<'idle' | 'working' | 'placed' | 'missed' | 'failed'>('idle');
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ handle?: Handle; rig: Rig; start: Point; view: Viewport; offset: Point } | null>(null);
   const overlay = useMemo(() => buildOverlay(rig), [rig]);
@@ -172,6 +175,7 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
       <div className="canvas-surface">
       <canvas ref={canvas} className="editor-canvas" data-testid="editor" tabIndex={0}
         aria-label={t.canvas} data-scale={view.scale} data-offset-x={view.x} data-offset-y={view.y}
+        data-tall={isTallImage(rig.image.width, rig.image.height) ? 'true' : 'false'}
         data-focus-group={focusGroup} data-visible-groups={visible.join(',')}
         data-dimmed-groups={focusGroup ? visible.filter(g => g !== focusGroup).join(',') : ''}
         data-inactive-opacity={focusGroup ? '0.2' : '0.6'}
@@ -232,9 +236,23 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
         style={{ left: Math.max(8, Math.min(hover.point[0] + 12, size.width - 220)), top: Math.max(8, hover.point[1] - 38) }}>{title(hover.handle.id)}</div>}
       </div>
       <div className="canvas-help">
-        <span className="context-hint">{hint}</span>
+        <span className="context-hint">{poseState === 'working' ? t.detectingPose : poseState === 'placed' ? t.poseDetected : poseState === 'missed' ? t.poseMissed : poseState === 'failed' ? t.poseFailed : hint}</span>
         <div className="zoom-tools" role="group" aria-label={t.zoom}>
-          <button disabled={view.scale <= 0.1} aria-label={t.zoomOut} title={t.zoomOut} onClick={() => setViewport(current => zoomAt(current, current.scale * 0.8, [size.width / 2, size.height / 2]))}>−</button>
+          {rig.fullBody && <button type="button" data-testid="detect-pose" disabled={!imageReady || poseState === 'working'} onClick={() => {
+            const image = source.current;
+            if (!image) return;
+            setPoseState('working');
+            void detectPoseLandmarks(image).then(landmarks => {
+              if (!landmarks) { setPoseState('missed'); return; }
+              const placed = applyPoseLandmarks(rig, landmarks);
+              if (!placed.count) { setPoseState('missed'); return; }
+              onBegin?.();
+              onChange(placed.rig);
+              onEnd?.();
+              setPoseState('placed');
+            }).catch(() => setPoseState('failed'));
+          }}>{t.detectPose}</button>}
+          <button disabled={view.scale <= 0.05} aria-label={t.zoomOut} title={t.zoomOut} onClick={() => setViewport(current => zoomAt(current, current.scale * 0.8, [size.width / 2, size.height / 2]))}>−</button>
           <button className="zoom-value" data-testid="zoom-value" title={t.actualSize} aria-label={t.actualSize} onClick={() => setViewport(current => zoomAt(current, 1, [size.width / 2, size.height / 2]))}>{Math.round(view.scale * 100)}%</button>
           <button disabled={view.scale >= 16} aria-label={t.zoomIn} title={t.zoomIn} onClick={() => setViewport(current => zoomAt(current, current.scale * 1.25, [size.width / 2, size.height / 2]))}>+</button>
           <button title={t.panHint} onClick={fitImage}>{t.fit}</button>

@@ -24,6 +24,26 @@ export interface Accessory {
   box: [number, number, number, number];
   color: { redness: number; minRed: number };
 }
+export type FullBodyBoneName =
+  | 'torso' | 'hips'
+  | 'upperArmL' | 'lowerArmL' | 'handL'
+  | 'upperArmR' | 'lowerArmR' | 'handR'
+  | 'upperLegL' | 'lowerLegL' | 'footL'
+  | 'upperLegR' | 'lowerLegR' | 'footR';
+/** One limb segment. Positive maxBend rotates a downward tip toward image-left. */
+export interface LimbBone {
+  pivot: Point;
+  tip: Point;
+  radius: number;
+  maxBend: number;
+}
+export interface FullBody {
+  bones: Record<FullBodyBoneName, LimbBone>;
+  /** Idle pose amplitude, 0–1. */
+  sway: number;
+  /** How strongly the arms follow body roll, 0–1. */
+  armFollow: number;
+}
 export interface Hand {
   outline: Point[];
   jaw: Point[];
@@ -66,6 +86,8 @@ export interface Rig {
   strands?: Strand[];
   accessories?: Accessory[];
   hand?: Hand;
+  /** Present on full-body avatars. Omitted bust avatars render unchanged. */
+  fullBody?: FullBody;
   mesh: {
     baseCell: number;
     fine: { x0: number; x1: number; y0: number; y1: number; cell: number };

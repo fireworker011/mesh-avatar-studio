@@ -160,6 +160,7 @@ export class MeshAvatarElement extends Base {
         if (name !== 'emotion' || this.hasAttribute(name)) this.#apply(avatar, name);
       }
       if (this.#voiceLevel !== null) avatar.setVoiceLevel(this.#voiceLevel);
+      this.#applyFrame(avatar);
       // Hair moves less for people who ask for reduced motion; the avatar itself still moves.
       if (matchMedia('(prefers-reduced-motion: reduce)').matches) avatar.setSwayGain(0.5);
       avatar.onMotion(motion => this.dispatchEvent(new CustomEvent('motion', { detail: { id: motion } })));
@@ -181,6 +182,13 @@ export class MeshAvatarElement extends Base {
     this.#stopLoop();
     this.#avatar?.destroy();
     this.#avatar = null;
+    this.style.aspectRatio = '';
+  }
+
+  /** A tall full-body figure uses its picture frame. Bust avatars stay square. */
+  #applyFrame(avatar: MeshAvatar) {
+    const { width, height } = avatar.imageSize;
+    this.style.aspectRatio = avatar.fullBody && height > width * 1.15 ? `${width} / ${height}` : '';
   }
 
   #updateLoop = () => {

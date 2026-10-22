@@ -7,6 +7,14 @@
 - Copyright: The MediaPipe Authors. Licensed under the Apache License, Version 2.0;
   see [LICENSE](LICENSE). Distributed without warranties or conditions of any kind.
 
+## Pose Landmarker
+
+- Asset: `pose_landmarker_lite.task`, Pose Landmarker float16 lite.
+- Source: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
+- SHA-256: `59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a`
+- The model is unmodified. Same Apache-2.0 license as the face landmarker.
+- The editor’s Detect joints button loads it from `/mediapipe/pose_landmarker_lite.task`. No CDN request is made.
+
 The runtime uses `@mediapipe/tasks-vision` version **0.10.21**, pinned in `package.json`
 and `package-lock.json`. Its JavaScript and WASM are licensed under Apache-2.0.
 Vite serves the installed WASM files at `/mediapipe/` and includes them, this model,

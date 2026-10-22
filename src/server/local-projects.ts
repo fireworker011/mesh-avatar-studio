@@ -12,6 +12,10 @@ import { checkEntryName } from '../../packages/runtime/src/format/zip';
 import type { LocalProject, LocalProjectEntry } from '../project-types';
 import { decodeVariants, JobError, projectJob, runTool, variantState, VARIANTS, type Runner } from './project-jobs';
 
+const SAMPLES: Record<string, string> = {
+  'sample-miko-qipao': 'samples/miko-qipao',
+  'sample-full-body': 'samples/full-body',
+};
 const SAMPLE = 'sample-miko-qipao';
 const displayPath = (path: string) => path === homedir() ? '~' : path.startsWith(`${homedir()}${sep}`) ? `~${path.slice(homedir().length)}` : path;
 const safeName = /^[A-Za-z0-9._-]+$/;
@@ -118,7 +122,7 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
     await mkdir(base, { recursive: true });
     if (await realpath(base) !== base) throw new HttpError(400, 'Project root cannot redirect elsewhere.');
     let stem = title.normalize('NFKD').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+|[. -]+$/g, '').slice(0, 80) || 'avatar';
-    if (stem === SAMPLE || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem)) stem = `avatar-${stem}`;
+    if (stem in SAMPLES || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(stem)) stem = `avatar-${stem}`;
     let name = stem, path = resolve(base, name);
     for (let index = 1; ; index++) {
       try { await mkdir(path); break; }
@@ -163,8 +167,9 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
   }
   async function folder(name: string) {
     if (!safeName.test(name) || name === '.' || name === '..' || name.startsWith('.studio-job-')) throw new HttpError(400, 'Invalid project name.');
-    const parent = name === SAMPLE ? sample : base;
-    const path = name === SAMPLE ? sample : resolve(base, name);
+    const sampleDir = SAMPLES[name] ? resolve(root, SAMPLES[name]) : null;
+    const parent = sampleDir ?? base;
+    const path = sampleDir ?? resolve(base, name);
     // The root itself and every nested symlink must stay under the intended physical folder.
     if (await realpath(parent) !== parent) throw new HttpError(400, 'Project root cannot redirect elsewhere.');
     await checked(parent, path);
@@ -179,7 +184,7 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
     return { name, relativePath: relative(root, path).split(sep).join('/'), absolutePath: path, displayPath: displayPath(path),
       rigFile: await exists(rigPath) ? 'rig.json' : 'rig.draft.json',
       updatedAt: (await stat(file)).mtime.toISOString(), hasSprites: await exists(resolve(path, 'built/sprites/sprites.json')),
-      hasVariants: await exists(resolve(path, 'variants')), hasSource: !!await sourceFile(path), readOnly: name === SAMPLE };
+      hasVariants: await exists(resolve(path, 'variants')), hasSource: !!await sourceFile(path), readOnly: name in SAMPLES };
   }
   return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/__studio/')) { next(); return; }
@@ -249,12 +254,14 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
         const entries = await exists(base) ? await readdir(base, { withFileTypes: true }) : [];
         const list: LocalProjectEntry[] = [];
         const add = async (name: string, isSample = false) => {
+          const sampleRelative = SAMPLES[name];
           try {
-            if (isSample && (!await exists(resolve(sample, 'source.png')) || !await exists(resolve(sample, 'built/base.png')))) return;
+            const sampleRoot = sampleRelative ? resolve(root, sampleRelative) : null;
+            if (isSample && (!sampleRoot || !await exists(resolve(sampleRoot, 'source.png')) || !await exists(resolve(sampleRoot, 'built/base.png')))) return;
             const value = await info(name); if (value) list.push(value);
           } catch (error) {
             if (error instanceof HttpError) return;
-            const relativePath = isSample ? 'samples/miko-qipao' : `projects/${name}`;
+            const relativePath = sampleRelative ?? `projects/${name}`;
             const failure = fileSystemError(root, error, relativePath);
             if (!failure) throw error;
             // A folder removed during the scan is no longer a project.
@@ -262,10 +269,10 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
             list.push({ name, relativePath, readOnly: isSample, error: { code: failure.body.code, path: failure.body.path } });
           }
         };
-        for (const entry of entries) if (entry.isDirectory() && !entry.name.startsWith('.') && safeName.test(entry.name) && entry.name !== SAMPLE) {
+        for (const entry of entries) if (entry.isDirectory() && !entry.name.startsWith('.') && safeName.test(entry.name) && !(entry.name in SAMPLES)) {
           await add(entry.name);
         }
-        await add(SAMPLE, true);
+        for (const name of Object.keys(SAMPLES)) await add(name, true);
         list.sort((a, b) => (b.error ? '' : b.updatedAt).localeCompare(a.error ? '' : a.updatedAt));
         json(200, list); return;
       }
@@ -279,7 +286,7 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
         res.end(bytes); return;
       }
       if (parts.length < 3) throw new HttpError(404, 'Not found.');
-      errorPath = parts[1] === SAMPLE ? 'samples/miko-qipao' : `projects/${parts[1]}`;
+      errorPath = SAMPLES[parts[1]] ?? `projects/${parts[1]}`;
       const name = parts[1], path = await folder(name), tail = parts.slice(2);
       if (req.method === 'POST' && tail.length === 1 && tail[0] === 'reveal') {
         await reveal(path); json(200, { path }); return;
@@ -289,7 +296,7 @@ export function localProjectMiddleware(root: string, reveal = revealFolder, runn
         json(200, { variants: await variantState(path), requests: await requests(path, name) }); return;
       }
       if (req.method === 'POST' && tail.length === 1 && ['rig', 'rebuild', 'variant-requests', 'import-variants'].includes(tail[0])) {
-        if (name === SAMPLE) throw new HttpError(403, 'The sample is read-only.');
+        if (name in SAMPLES) throw new HttpError(403, 'The sample is read-only.');
         if (!await sourceFile(path)) throw new HttpError(403, 'Source image is missing. This avatar is playback-only.');
         const action = tail[0], body = await readBody(req, action === 'import-variants' ? 36 * 1024 * 1024 : 1024 * 1024);
         let files: ReturnType<typeof decodeVariants> = [];
@@ -330,7 +337,7 @@ export function localProjectsPlugin(root: string): Plugin {
   const base = resolve(root, 'projects');
   const variantProject = (file: string) => {
     const parts = relative(base, file).split(sep);
-    if (!safeName.test(parts[0]) || parts[0].startsWith('.') || parts[0] === SAMPLE) return;
+    if (!safeName.test(parts[0]) || parts[0].startsWith('.') || parts[0] in SAMPLES) return;
     if (parts[1] === 'variants' || (parts[1] === 'built' && parts[2] === 'sprites')) return parts[0];
   };
   return { name: 'local-studio-projects', apply: 'serve', config(config) {
