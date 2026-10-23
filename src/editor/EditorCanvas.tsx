@@ -4,7 +4,9 @@ import { buildOverlay, changeVertex, imagePoint, moveHandle, nearestEdge, neares
 import { useI18n, type PartGroup } from './i18n';
 import { PART_COLORS } from './parts';
 import { readPreference, savePreference } from './preferences';
-import { coarseWheel, fitBounds, inputFocused, partBounds, zoomAt } from './viewport';
+import { applyPoseLandmarks, mirrorLimbs } from './pose-landmarks';
+import { detectPoseLandmarks, type PoseDetector } from './pose-client';
+import { coarseWheel, fitBounds, inputFocused, isTallImage, partBounds, zoomAt } from './viewport';
 
 interface Props {
   rig: Rig;
@@ -34,7 +36,13 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
   const focused = useRef(0);
   const space = useRef(false);
   const [hover, setHover] = useState<{ handle: Handle; point: Point } | null>(null);
+  const [poseState, setPoseState] = useState<'idle' | 'working' | 'placed' | 'missed' | 'failed'>('idle');
+  const [detector, setDetector] = useState<PoseDetector>('auto');
   const [dragging, setDragging] = useState(false);
+  const activeJoint = useRef<string | null>(null);
+  const rigRef = useRef(rig);
+  const nudging = useRef(false);
+  if (!nudging.current) rigRef.current = rig;
   const drag = useRef<{ handle?: Handle; rig: Rig; start: Point; view: Viewport; offset: Point } | null>(null);
   const overlay = useMemo(() => buildOverlay(rig), [rig]);
   const handles = overlay.handles.filter(h => visible.includes(h.group));
@@ -153,13 +161,24 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
       const [x, y] = screen(handle.point, view);
       const active = focusGroup === handle.group;
       context.globalAlpha = !focusGroup ? 0.6 : active ? 1 : 0.2;
+      const joint = handle.group === 'fullBody';
       context.beginPath();
-      context.arc(x, y, active ? 5 : 3.5, 0, Math.PI * 2);
+      context.arc(x, y, joint && active ? 7 : active ? 5 : 3.5, 0, Math.PI * 2);
       context.fillStyle = PART_COLORS[handle.group as PartGroup];
       context.fill();
-      context.strokeStyle = '#ffffff';
-      context.lineWidth = 1;
+      context.strokeStyle = handle.item === selected ? '#111111' : '#ffffff';
+      context.lineWidth = handle.item === selected ? 2 : 1;
       context.stroke();
+    }
+    if (focusGroup === 'fullBody') {
+      context.globalAlpha = 1;
+      context.fillStyle = '#14342c';
+      context.font = '11px sans-serif';
+      for (const shape of shapes) {
+        if (shape.group !== 'fullBody' || shape.points.length !== 2) continue;
+        const [ax, ay] = screen(shape.points[0], view), [bx, by] = screen(shape.points[1], view);
+        context.fillText(shape.item.split('.').at(-1) ?? '', (ax + bx) / 2 + 6, (ay + by) / 2);
+      }
     }
     context.globalAlpha = 1;
   }, [rig, handles, shapes, selected, focusGroup, size, imageReady, view]);
@@ -172,13 +191,30 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
       <div className="canvas-surface">
       <canvas ref={canvas} className="editor-canvas" data-testid="editor" tabIndex={0}
         aria-label={t.canvas} data-scale={view.scale} data-offset-x={view.x} data-offset-y={view.y}
+        data-tall={isTallImage(rig.image.width, rig.image.height) ? 'true' : 'false'}
         data-focus-group={focusGroup} data-visible-groups={visible.join(',')}
         data-dimmed-groups={focusGroup ? visible.filter(g => g !== focusGroup).join(',') : ''}
         data-inactive-opacity={focusGroup ? '0.2' : '0.6'}
         style={{ cursor: dragging ? 'grabbing' : 'grab' }}
-        onKeyDown={event => { if (event.code === 'Space') { event.preventDefault(); space.current = true; } }}
-        onKeyUp={event => { if (event.code === 'Space') space.current = false; }}
-        onBlur={() => { space.current = false; }}
+        onKeyDown={event => {
+          if (event.code === 'Space') { event.preventDefault(); space.current = true; return; }
+          if (inputFocused(event.target) || space.current) return;
+          const arrow = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.code];
+          if (!arrow || !activeJoint.current) return;
+          const handle = buildOverlay(rigRef.current).handles.find(item => item.id === activeJoint.current);
+          if (!handle || handle.group !== 'fullBody') return;
+          event.preventDefault();
+          const step = event.shiftKey ? 10 : 1;
+          if (!nudging.current) { nudging.current = true; onBegin?.(); }
+          const moved = moveHandle(rigRef.current, handle, [handle.point[0] + arrow[0] * step, handle.point[1] + arrow[1] * step]);
+          rigRef.current = moved;
+          onChange(moved);
+        }}
+        onKeyUp={event => {
+          if (event.code === 'Space') space.current = false;
+          if (nudging.current && event.code.startsWith('Arrow')) { nudging.current = false; onEnd?.(); }
+        }}
+        onBlur={() => { space.current = false; if (nudging.current) { nudging.current = false; onEnd?.(); } }}
         onContextMenu={event => event.preventDefault()}
         onPointerDown={event => {
           event.preventDefault();
@@ -192,6 +228,7 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
               drag.current = { rig, start: point, view: { ...viewRef.current }, offset: [0, 0] };
             } else {
               onSelect(handle.item);
+              activeJoint.current = handle.group === 'fullBody' ? handle.id : null;
               if (event.altKey && handle.vertex) {
                 onChange(changeVertex(rig, handle.vertex.path, handle.vertex.index, null, handle.vertex.closed));
                 return;
@@ -232,9 +269,30 @@ export function EditorCanvas({ rig, sourceUrl, visible, selected, onSelect, onCh
         style={{ left: Math.max(8, Math.min(hover.point[0] + 12, size.width - 220)), top: Math.max(8, hover.point[1] - 38) }}>{title(hover.handle.id)}</div>}
       </div>
       <div className="canvas-help">
-        <span className="context-hint">{hint}</span>
+        <span className="context-hint">{poseState === 'working' ? t.detectingPose : poseState === 'placed' ? t.poseDetected : poseState === 'missed' ? t.poseMissed : poseState === 'failed' ? t.poseFailed : hint}</span>
         <div className="zoom-tools" role="group" aria-label={t.zoom}>
-          <button disabled={view.scale <= 0.1} aria-label={t.zoomOut} title={t.zoomOut} onClick={() => setViewport(current => zoomAt(current, current.scale * 0.8, [size.width / 2, size.height / 2]))}>−</button>
+          {rig.fullBody && <button type="button" data-testid="detect-pose" disabled={!imageReady || poseState === 'working'} onClick={() => {
+            const image = source.current;
+            if (!image) return;
+            setPoseState('working');
+            void detectPoseLandmarks(image, detector).then(landmarks => {
+              if (!landmarks) { setPoseState('missed'); return; }
+              const placed = applyPoseLandmarks(rig, landmarks);
+              if (!placed.count) { setPoseState('missed'); return; }
+              onBegin?.();
+              onChange(placed.rig);
+              onEnd?.();
+              setPoseState('placed');
+            }).catch(() => setPoseState('failed'));
+          }}>{t.detectPose}</button>}
+          {rig.fullBody && <select className="pose-detector" data-testid="pose-detector" aria-label={t.poseDetector} value={detector} onChange={event => setDetector(event.target.value as PoseDetector)}>
+            <option value="auto">{t.poseAuto}</option>
+            <option value="photo">{t.posePhoto}</option>
+            <option value="line">{t.poseLine}</option>
+            <option value="outline">{t.poseOutline}</option>
+          </select>}
+          {rig.fullBody && <button type="button" data-testid="mirror-limbs" onClick={() => { onBegin?.(); onChange(mirrorLimbs(rig)); onEnd?.(); }}>{t.mirrorLimbs}</button>}
+          <button disabled={view.scale <= 0.05} aria-label={t.zoomOut} title={t.zoomOut} onClick={() => setViewport(current => zoomAt(current, current.scale * 0.8, [size.width / 2, size.height / 2]))}>−</button>
           <button className="zoom-value" data-testid="zoom-value" title={t.actualSize} aria-label={t.actualSize} onClick={() => setViewport(current => zoomAt(current, 1, [size.width / 2, size.height / 2]))}>{Math.round(view.scale * 100)}%</button>
           <button disabled={view.scale >= 16} aria-label={t.zoomIn} title={t.zoomIn} onClick={() => setViewport(current => zoomAt(current, current.scale * 1.25, [size.width / 2, size.height / 2]))}>+</button>
           <button title={t.panHint} onClick={fitImage}>{t.fit}</button>

@@ -1,0 +1,6 @@
+{
+  "format": "mesh-avatar",
+  "version": 1,
+  "name": "Illustration pose sample",
+  "description": "Original clothed adult figure generated for this repository, for pose detection and full-body preview. Not taken from another dataset."
+}

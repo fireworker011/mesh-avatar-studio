@@ -1,15 +1,41 @@
 // Mesh avatar engine: turns a pre-split single illustration into a
 // 2D mesh avatar animated on a WebGL2 canvas. No UI and no framework: the app drives it
 // through the small API returned by createMeshAvatar().
+import { buildSkeleton, meshAngles, orderTriangles, poseFromJson, poseFromKeypoints, posePreset, poseToJson, restPose, solveIk, trackSkeleton, uncoveredWedges } from '../pose/skeleton.js';
 import { createRig } from './rig.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer, faceDensity } from './renderer.js';
 import { createPhysics } from './physics.js';
 import { createSpriteModule, eyeMood } from './sprites.js';
+import { createCutout } from './body-parts.js';
 import { Motion } from './motion.js';
 import { ExpressionOverlay } from './expression-overlay.js';
 import { MOTIONS, IDLE_MOTIONS } from './motions.js';
 
 const EYE_PARTS = ['ball', 'low', 'crease', 'lash'];   // back to front
+const HINGE_BONES = ['lowerArmL', 'lowerArmR', 'lowerLegL', 'lowerLegR'];
+
+// Tight grid around elbows and knees, plus a bust-density face when the head is small.
+// Bust rigs omit fullBody, so they get neither.
+function meshRegions(rig) {
+  const bones = rig.fullBody?.bones;
+  if (!bones) return null;
+  const cell = Math.max(4, Math.round(rig.mesh.baseCell / 2));
+  const regions = [];
+  for (const name of HINGE_BONES) {
+    const bone = bones[name];
+    if (!bone) continue;
+    const [x, y] = bone.pivot;
+    const reach = Math.max(12, bone.radius * 1.4);
+    const x0 = Math.max(0, Math.floor(x - reach));
+    const x1 = Math.min(rig.image.width, Math.ceil(x + reach));
+    const y0 = Math.max(0, Math.floor(y - reach));
+    const y1 = Math.min(rig.image.height, Math.ceil(y + reach));
+    if (x1 > x0 && y1 > y0) regions.push({ x0, x1, y0, y1, cell });
+  }
+  const face = faceDensity(rig).region;
+  if (face) regions.push(face);
+  return regions.length ? regions : null;
+}
 
 const imageCache = new Map();
 const jsonCache = new Map();
@@ -66,12 +92,6 @@ export async function createMeshAvatarImpl(canvas, options) {
     throw new Error('createMeshAvatar requires assets or assetsBase.');
   }
   const rig = options.rig;
-  const engine = createRig(rig);
-  const { IMG, EYES, baseWeights, deformBase, eyePartY, eyePartAlpha,
-    handWeights, handFrame, deformHand, TASSELS } = engine;
-  const { Renderer, buildGrid } = createRenderer(engine, rig);
-  const { Physics } = createPhysics(engine, rig);
-  const { createSprites } = createSpriteModule(engine, rig);
   const base = (options.assetsBase ?? '').replace(/\/?$/, '/');
   const asset = (name, build) => {
     if (options.assets) {
@@ -80,6 +100,25 @@ export async function createMeshAvatarImpl(canvas, options) {
     }
     return `${base}${name}${build === undefined ? '' : `?b=${build}`}`;
   };
+  // Cut-out limbs (parts/parts.json with a cut base) are optional. Without them a
+  // full-body avatar is the one skinned illustration it always was.
+  let cut = null;
+  if (rig.fullBody) {
+    try {
+      const sheet = await loadJson(asset('parts/parts.json'));
+      if (sheet?.cutout?.base && sheet.layers?.[sheet.cutout.base]) {
+        const names = Object.keys(sheet.layers);
+        const images = Object.fromEntries(await Promise.all(names.map(async name => [name, await loadImage(asset(`parts/${name}.png`, sheet.build))])));
+        cut = { sheet, images };
+      }
+    } catch { cut = null; }
+  }
+  const engine = createRig(rig, { cutout: !!cut });
+  const { IMG, EYES, baseWeights, deformBase, eyePartY, eyePartAlpha,
+    handWeights, handFrame, deformHand, TASSELS } = engine;
+  const { Renderer, buildGrid, buildContourGrid } = createRenderer(engine, rig);
+  const { Physics } = createPhysics(engine, rig);
+  const { createSprites } = createSpriteModule(engine, rig);
   const meta = await loadJson(asset('layers.json'));
 
   const names = ['base', ...(rig.hand ? ['hand'] : []), ...TASSELS.map(t => t.name), ...[0, 1].flatMap(i => EYE_PARTS.map(p => `eye${i}_${p}`)), 'hairmask'];
@@ -93,21 +132,40 @@ export async function createMeshAvatarImpl(canvas, options) {
   const R = new Renderer(canvas, { padTop: options.padTop ?? rig.view.padTop, padSide: options.padSide ?? rig.view.padSide, fit: options.fit });
   const rects = { base: [0, 0, IMG.w, IMG.h], ...meta.layers };
 
-  // base layer, denser where hair strands bend and the face parts shift
-  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(imgs.base), imgs.base.width, rig.mesh.fine);
+  // base layer, denser where hair strands bend and the face parts shift.
+  // Elbows and knees get a tighter grid only when the rig has limbs.
+  const density = faceDensity(rig);
+  const baseImage = cut ? cut.images[cut.sheet.cutout.base] : imgs.base;
+  const baseMesh = buildGrid(rects.base, rig.mesh.baseCell, alphaOf(baseImage), baseImage.width, rig.mesh.fine, meshRegions(rig));
   const baseW = [];
   for (let i = 0; i < baseMesh.rest.length / 2; i++) {
     const x = baseMesh.rest[i * 2], y = baseMesh.rest[i * 2 + 1];
     baseW.push(baseWeights(x, y, hairAt(x, y)));
   }
-  R.addLayer('base', imgs.base, baseMesh, { face: true });
+  R.addLayer('base', baseImage, baseMesh, { face: true });
+  const skeleton = buildSkeleton(rig);
+  // the cut base has no limb triangles to re-sort; its limbs are separate layers
+  const vertexBone = skeleton && !cut ? baseW.map(weights => {
+    let best = '', weight = 0;
+    for (const [name, value] of weights.skeletonLimbs ?? []) if (value > weight) { best = name; weight = value; }
+    return best;
+  }) : [];
+  let skeletonBinding = null, drawKey = '', bodyTrack = null;
+  function applyDrawOrder() {
+    if (!skeleton || cut) return;
+    const depth = skeletonBinding?.drawOrder ?? {};
+    const key = JSON.stringify(depth);
+    if (key === drawKey) return;
+    drawKey = key;
+    R.setTriangleOrder('base', orderTriangles(baseMesh.tris, vertexBone, depth));
+  }
 
   // eyes: white+iris clipped by the lids, then the line layers on top
   const eyeParts = [];
   EYES.forEach((e, i) => {
     for (const part of EYE_PARTS) {
       const n = `eye${i}_${part}`;
-      const mesh = buildGrid(rects[n], part === 'ball' ? rig.mesh.eyeBallCell : rig.mesh.eyeCell, alphaOf(imgs[n]), imgs[n].width);
+      const mesh = buildGrid(rects[n], part === 'ball' ? density.ballCell : density.eyeCell, alphaOf(imgs[n]), imgs[n].width);
       const W = [];
       for (let k = 0; k < mesh.rest.length / 2; k++) W.push(baseWeights(mesh.rest[k * 2], mesh.rest[k * 2 + 1], 0));
       const layer = R.addLayer(n, imgs[n], mesh, { eyeBall: part === 'ball' ? i : undefined });
@@ -122,10 +180,20 @@ export async function createMeshAvatarImpl(canvas, options) {
       const sheet = await loadJson(asset('sprites/sprites.json'));
       const simgs = Object.fromEntries(await Promise.all(Object.keys(sheet.layers).map(async n =>
         [n, await loadImage(asset(`sprites/${n}.png`, sheet.build))])));
-      sprites = createSprites(R, sheet, simgs, buildGrid, alphaOf);
+      sprites = createSprites(R, sheet, simgs, buildGrid, alphaOf, density.spriteCell);
     }
   } catch (err) {
     console.warn('eye / mouth sprites not loaded:', err);
+  }
+  const bodyParts = cut ? createCutout(R, cut.sheet, cut.images, { buildGrid, buildContourGrid, alphaOf, hairAt }, engine, rig) : null;
+  // A small full-body eye has no closed-eye sprite. Moving the lash mesh squashes the
+  // brow skin in that cut-out, and hiding the whole cut-out erases the brow. Leave the
+  // lash where it was drawn and mask only the opening; the base shader paints the lid.
+  const paintBlink = !sprites && density.scale < 0.9;
+  if (paintBlink) {
+    for (const ep of eyeParts) {
+      if (ep.part === 'lash' || ep.part === 'low' || ep.part === 'crease') ep.layer.eyeMask = ep.eye;
+    }
   }
 
   const tassels = TASSELS.map(t => {
@@ -139,7 +207,9 @@ export async function createMeshAvatarImpl(canvas, options) {
   if (rig.hand) R.addLayer('hand', imgs.hand, handMesh);
 
   const physics = new Physics();
-  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy]);
+  const motion = new Motion(rig.view.gazeCenter ?? [rig.head.cx, rig.head.cy], {
+    fullBody: !!rig.fullBody, sway: rig.fullBody?.sway ?? 0,
+  });
   const listeners = new Set();
   motion.onMotion = id => { for (const fn of listeners) fn(id); };
 
@@ -155,6 +225,12 @@ export async function createMeshAvatarImpl(canvas, options) {
       if (!options.preserveMouthForm || parameters.mouthForm === undefined) P.mouthForm = motion.P.mouthForm;
     }
     // Live expressions sit above tracking and lip sync; neutral leaves the parameters untouched.
+    if (skeletonBinding) {
+      P.skeletonAngles = skeletonBinding.angles;
+      P.skeletonParents = skeletonBinding.parents;
+      P.skeletonTwist = skeletonBinding.twists;
+      if (skeletonBinding.translation) P.skeletonTranslation = skeletonBinding.translation;
+    }
     const out = expression.apply(P, dt);
     lastParameters = out;
     return out;
@@ -174,11 +250,16 @@ export async function createMeshAvatarImpl(canvas, options) {
     for (const ep of eyeParts) {
       const open = eyeOpenFor(ep.eye === 0 ? P.eyeROpen : P.eyeLOpen);
       const smile = ep.eye === 0 ? P.eyeSmile : (P.eyeSmileL ?? P.eyeSmile);
-      ep.layer.alpha = eyePartAlpha(ep.part, open, smile);
+      const meshOpen = paintBlink ? 1 : open;
+      const meshSmile = paintBlink ? 0 : smile;
+      // The iris is the open eye. Lash and lower-lash ink inside the opening is masked
+      // in the shader; ink outside it, including the brow, stays where it was drawn.
+      const fade = paintBlink && ep.part === 'ball' ? Math.min(1, Math.max(0, open)) : 1;
+      ep.layer.alpha = eyePartAlpha(ep.part, meshOpen, meshSmile) * fade;
       const r = ep.mesh.rest, o = ep.mesh.pos;
       for (let k = 0; k < ep.W.length; k++) {
         const x = r[k * 2], y = r[k * 2 + 1];
-        deformBase(x, eyePartY(ep.e, ep.part, x, y, open, smile), ep.W[k], P, phys, tmp);
+        deformBase(x, eyePartY(ep.e, ep.part, x, y, meshOpen, meshSmile), ep.W[k], P, phys, tmp);
         o[k * 2] = tmp[0]; o[k * 2 + 1] = tmp[1];
       }
     }
@@ -192,7 +273,8 @@ export async function createMeshAvatarImpl(canvas, options) {
     }
     physics.chains.forEach((ch, k) => deformTassel(ch, tassels[k].mesh));
 
-    const ball = 7; // px of iris travel
+    bodyParts?.update(P, phys, skeletonBinding);
+    const ball = 7 * density.scale; // px of iris travel; density.scale is 1 on a bust
     R.draw({
       angleX: P.angleX, angleY: P.angleY, angleZ: P.angleZ,
       eyes: [
@@ -223,12 +305,38 @@ export async function createMeshAvatarImpl(canvas, options) {
 
   return {
     motions: motionList,
+    imageSize: { width: IMG.w, height: IMG.h },
+    fullBody: !!rig.fullBody,
     setParameters(values, weight = 1) { parameters = { ...values }; parameterWeight = Math.min(1, Math.max(0, Number(weight) || 0)); },
+    setSkeletonPose(pose) {
+      if (!skeleton) return null;
+      skeletonBinding = pose ? meshAngles(skeleton, pose) : null;
+      applyDrawOrder();
+      return skeletonBinding?.pose ?? null;
+    },
+    getSkeletonPose() { return skeletonBinding?.pose ?? null; },
+    applyPosePreset(name) { return skeleton ? this.setSkeletonPose(posePreset(skeleton, name)) : null; },
+    solveSkeletonIk(goal) {
+      if (!skeleton) return null;
+      return this.setSkeletonPose(solveIk(skeleton, skeletonBinding?.pose ?? restPose(skeleton), goal));
+    },
+    poseFromKeypoints(input, options) { return skeleton ? this.setSkeletonPose(poseFromKeypoints(skeleton, input, options)) : null; },
+    trackBody(input, options = {}) {
+      if (!skeleton) return null;
+      if (!bodyTrack) bodyTrack = {};
+      return this.setSkeletonPose(trackSkeleton(skeleton, input, bodyTrack, options));
+    },
+    resetBodyTrack() { bodyTrack = null; return this.setSkeletonPose(null); },
+    getSkeletonPoseJson() { return this.getSkeletonPose() ? poseToJson(this.getSkeletonPose()) : null; },
+    loadSkeletonPose(json) { return skeleton ? this.setSkeletonPose(poseFromJson(skeleton, json)) : null; },
+    uncoveredRegions() { return skeleton && skeletonBinding ? uncoveredWedges(skeleton, skeletonBinding.pose) : []; },
     getParameters() { return { ...lastParameters }; },
     /** 0..1 loudness of the voice being played (e.g. normalised RMS). */
     setVoiceLevel(v) { motion.setVoiceLevel(v); },
     /** true while TTS audio is playing: idle motions pause and the head nods along. */
     setSpeaking(on) { motion.setSpeaking(on); },
+    /** Microphone vowel (`a` `i` `u` `e` `o`), `m` while the lips close, or null. */
+    setViseme(vowel) { motion.setViseme(vowel); },
     /** AITuber OnAir emotion tag: happy / sad / angry / surprised / relaxed / neutral (or null). */
     setEmotion(tag, opts) { motion.setEmotion(tag, opts); },
     /** Live expression layered over tracking (see OVERLAY_EXPRESSIONS); 'neutral' clears it. */

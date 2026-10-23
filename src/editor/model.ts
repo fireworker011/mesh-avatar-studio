@@ -48,11 +48,12 @@ export function imagePoint(point: Point, view: Viewport): Point {
 }
 export function nearestHandle(handles: Handle[], point: Point, view: Viewport, threshold = 8): Handle | undefined {
   let nearest: Handle | undefined;
-  let distance = threshold;
+  let best = Infinity;
   for (const handle of handles) {
+    const reach = handle.group === 'fullBody' ? Math.max(threshold, 16) : threshold;
     const p = screen(handle.point, view);
     const d = Math.hypot(p[0] - point[0], p[1] - point[1]);
-    if (d <= distance) { distance = d; nearest = handle; }
+    if (d <= reach && d <= best) { best = d; nearest = handle; }
   }
   return nearest;
 }
@@ -154,6 +155,11 @@ export function buildOverlay(rig: Rig): { handles: Handle[]; shapes: Shape[] } {
           [center[0] + sign * (object.halfLen as number) * Math.cos(object.angle as number),
             center[1] + sign * (object.halfLen as number) * Math.sin(object.angle as number)]) });
       }
+    }
+    if (group === 'fullBody' && Array.isArray(object.pivot) && Array.isArray(object.tip)
+      && object.pivot.length === 2 && object.tip.length === 2
+      && [...object.pivot, ...object.tip].every(value => typeof value === 'number')) {
+      shapes.push({ item: path, group, kind: 'line', points: [object.pivot as Point, object.tip as Point] });
     }
     if (typeof object.pivotX === 'number' && typeof object.pivotY === 'number')
       pointHandle(path, group, [object.pivotX, object.pivotY], `${path}.pivotX`, `${path}.pivotY`, `${path}.pivot`);

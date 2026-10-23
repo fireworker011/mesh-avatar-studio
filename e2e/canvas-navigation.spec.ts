@@ -66,7 +66,7 @@ test('empty-space drag, zoom buttons, shortcuts, limits and part fitting keep ri
   await page.getByRole('button', { name: 'Fit', exact: true }).click(); await page.getByTestId('part-mouth').dblclick();
   await expect.poll(async () => (await view(page)).scale).toBeCloseTo(fitted.scale);
   await wheel(page, { deltaY: -100000, ctrlKey: true }); await expect(page.getByTestId('zoom-value')).toHaveText('1600%');
-  await wheel(page, { deltaY: 100000, ctrlKey: true }); await expect(page.getByTestId('zoom-value')).toHaveText('10%');
+  await wheel(page, { deltaY: 100000, ctrlKey: true }); await expect(page.getByTestId('zoom-value')).toHaveText('5%');
   await page.getByTestId('part-head').click(); const field = page.getByRole('spinbutton', { name: 'head.cx', exact: true }); await field.focus();
   const preserved = await view(page);
   expect(await field.evaluate(element => { const event = new KeyboardEvent('keydown', { key: '+', ctrlKey: true, bubbles: true, cancelable: true }); element.dispatchEvent(event); return event.defaultPrevented; })).toBe(false);

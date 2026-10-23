@@ -104,6 +104,42 @@ export function validateAvatarFiles(files: Record<string, FileData>): string[] {
       }
     });
   }
+  const parts = json('built/parts/parts.json', false);
+  if (parts && version(parts, 'built/parts/parts.json', false)) {
+    build(parts, 'built/parts/parts.json');
+    layers(parts.layers, 'built/parts/parts.json', 'built/parts', rig ? [rig.image.width, rig.image.height] : undefined);
+    if (!Array.isArray(parts.bindings)) errors.push('built/parts/parts.json.bindings: expected a list');
+    else for (const [index, binding] of parts.bindings.entries()) {
+      const path = `built/parts/parts.json.bindings[${index}]`;
+      if (!object(binding) || typeof binding.bone !== 'string' || !/^[A-Za-z0-9_-]+$/.test(binding.bone)) {
+        errors.push(`${path}.bone: expected a safe bone name`);
+        continue;
+      }
+      for (const slot of ['front', 'back', 'fist']) {
+        if (binding[slot] === undefined) continue;
+        if (typeof binding[slot] !== 'string' || !object(parts.layers) || !own(parts.layers, binding[slot] as string)) {
+          errors.push(`${path}.${slot}: unknown part layer`);
+        }
+      }
+    }
+    if (parts.cutout !== undefined) {
+      const path = 'built/parts/parts.json.cutout';
+      const named = (name: unknown, field: string) => {
+        if (typeof name !== 'string' || !object(parts.layers) || !own(parts.layers, name)) {
+          errors.push(`${field}: unknown part layer`);
+        }
+      };
+      if (!object(parts.cutout)) errors.push(`${path}: expected an object`);
+      else {
+        named(parts.cutout.base, `${path}.base`);
+        for (const key of ['under', 'over'] as const) {
+          const list = parts.cutout[key];
+          if (!Array.isArray(list)) errors.push(`${path}.${key}: expected a list`);
+          else list.forEach((name, index) => named(name, `${path}.${key}[${index}]`));
+        }
+      }
+    }
+  }
   const sprites = json('built/sprites/sprites.json', false);
   if (sprites && version(sprites, 'built/sprites/sprites.json')) {
     build(sprites, 'built/sprites/sprites.json');

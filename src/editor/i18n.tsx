@@ -33,6 +33,18 @@ const en = {
   lipSpeed: 'Morae per second', lipLoop: 'Loop', skippedKana: 'Skipped characters:', lipHelp: 'Hiragana, katakana and spaces. Preview only; no audio.',
   sweepTip: 'Swings the head through its full range to find tears',
   turn: 'Turn left/right', look: 'Look up/down', tilt: 'Tilt', eyeOpen: 'Eyes open', mouthOpen: 'Mouth open', bodyTilt: 'Body tilt',
+  fullBodySample: 'Full-body sample', detectPose: 'Detect joints', detectingPose: 'Detecting joints…',
+  poseDetected: 'Joints placed. Drag one, or nudge it with the arrow keys.', poseMissed: 'No pose found. Try Outline, or drag the joints.',
+  poseFailed: 'Joint detection could not run. Drag the joints by hand.',
+  poseDetector: 'Pose detector', poseAuto: 'Auto', posePhoto: 'Photo', poseLine: 'Line art', poseOutline: 'Outline',
+  mirrorLimbs: 'Mirror left to right', photoSample: 'Illustration pose sample', vestSample: 'Vest full-body sample', coatSample: 'Teal coat full-body sample',
+  shortcutNudge: 'Nudge the selected joint', nudgeKeys: 'Arrow keys · Shift for 10 px',
+  limbPose: 'Limb pose', torsoBend: 'Torso', hipSway: 'Hips', armL: 'Left arm', armR: 'Right arm',
+  skeletonPose: 'Skeleton pose', skeletonHelp: 'Holds an anatomical pose and replaces the limb sliders until reset. Joints clamp to published ranges. One drawing has no hidden side.',
+  skeletonArms: 'Arms', skeletonLegs: 'Legs', skeletonSpine: 'Spine and head', skeletonFingers: 'Fingers',
+  ikReach: 'Reach', ikEffector: 'IK handle', ikCcd: 'Solve CCD', ikFabrik: 'Solve FABRIK',
+  savePose: 'Save pose', loadPose: 'Load pose', loadKeypoints: 'Load keypoints', poseError: 'That file is not a pose or a keypoint list.',
+  forearmL: 'Left forearm', forearmR: 'Right forearm', thighL: 'Left thigh', thighR: 'Right thigh',
   loading: 'Loading local assets…', updating: 'Updating preview…', ready: 'Engine ready', previewError: 'Preview could not load',
   selection: 'Selected part', selectedItem: 'Selected rig item', selectPart: 'Select a part to edit it', tip: 'Tip',
   guideTitle: 'Three steps to your first edit', guide1: 'Pick a part on the left', guide2: 'Drag its dots on the image',
@@ -76,6 +88,18 @@ const ja: typeof en = {
   lipSpeed: '1秒あたりの拍数', lipLoop: '繰り返し', skippedKana: '読み飛ばす文字:', lipHelp: 'ひらがな・カタカナ・空白に対応。音声は再生しません。',
   sweepTip: '頭を最大角度まで動かし、画像の隙間や破れを確認します',
   turn: '顔を左右に向ける', look: '顔を上下に向ける', tilt: '頭を傾ける', eyeOpen: '目の開き', mouthOpen: '口の開き', bodyTilt: '体を傾ける',
+  fullBodySample: '全身サンプル', detectPose: '関節を検出', detectingPose: '関節を検出しています…',
+  poseDetected: '関節を配置しました。ドラッグするか、矢印キーで少しずつ動かしてください。', poseMissed: '姿勢を見つけられませんでした。「輪郭」を試すか、関節を手で合わせてください。',
+  poseFailed: '関節の検出を実行できませんでした。関節を手で合わせてください。',
+  poseDetector: '姿勢の検出方法', poseAuto: '自動', posePhoto: '写真', poseLine: '線画', poseOutline: '輪郭',
+  mirrorLimbs: '左を右へコピー', photoSample: 'イラスト姿勢サンプル', vestSample: 'ベストの全身サンプル', coatSample: 'ティールコートの全身サンプル',
+  shortcutNudge: '選択中の関節を微調整', nudgeKeys: '矢印キー · Shiftで10画素',
+  limbPose: '手足のポーズ', torsoBend: '胴', hipSway: '腰', armL: '左の腕', armR: '右の腕',
+  skeletonPose: '骨格のポーズ', skeletonHelp: '解剖学的なポーズを固定し、リセットするまで手足スライダーの代わりに使います。関節は公開されている可動域で止まります。絵は隠れた側を持っていません。',
+  skeletonArms: '腕', skeletonLegs: '脚', skeletonSpine: '背骨と頭', skeletonFingers: '指',
+  ikReach: '手を伸ばす', ikEffector: 'IKの持ち手', ikCcd: 'CCDで解く', ikFabrik: 'FABRIKで解く',
+  savePose: 'ポーズを保存', loadPose: 'ポーズを読む', loadKeypoints: 'キーポイントを読む', poseError: 'ポーズまたはキーポイントのファイルではありません。',
+  forearmL: '左の前腕', forearmR: '右の前腕', thighL: '左の太もも', thighR: '右の太もも',
   loading: '画像を読み込み中…', updating: 'プレビューを更新中…', ready: 'プレビューの準備完了', previewError: 'プレビューを読み込めませんでした',
   selection: '選択パーツ', selectedItem: '選択するパーツ', selectPart: 'パーツを選んで編集してください', tip: '調整のコツ',
   guideTitle: '最初の編集は3ステップ', guide1: '左の一覧からパーツを選ぶ', guide2: '画像の点をドラッグする',
@@ -96,7 +120,15 @@ const ja: typeof en = {
 };
 const zh: typeof en = { ...workflowZh, ...uiZh };
 export const dictionaries = { en, ja, zh };
-export type PartGroup = 'head' | 'eyes' | 'mouth' | 'face' | 'cheeks' | 'strands' | 'buns' | 'accessories' | 'body' | 'hand' | 'mesh' | 'view';
+export function sampleLabel(name: string | undefined, labels: { fullBodySample: string; photoSample: string; vestSample: string; coatSample: string; sampleProject: string }): string | null {
+  if (name === 'sample-full-body') return labels.fullBodySample;
+  if (name === 'sample-full-body-photo') return labels.photoSample;
+  if (name === 'sample-full-body-vest') return labels.vestSample;
+  if (name === 'sample-full-body-coat') return labels.coatSample;
+  if (name === 'sample-miko-qipao') return labels.sampleProject;
+  return null;
+}
+export type PartGroup = 'head' | 'eyes' | 'mouth' | 'face' | 'cheeks' | 'strands' | 'buns' | 'accessories' | 'body' | 'fullBody' | 'hand' | 'mesh' | 'view';
 const partText: Record<Language, Record<PartGroup, [string, string, string]>> = {
   zh: partsZh,
   en: {
@@ -109,6 +141,7 @@ const partText: Record<Language, Record<PartGroup, [string, string, string]>> = 
     buns: ['Hair buns', 'Regions that bob as a whole.', 'Fit each circle around a bun without including the face.'],
     accessories: ['Accessories', 'Pendulum parts such as tassels.', 'Place the pivot where the accessory attaches and the tip at its lowest point.'],
     body: ['Body', 'Breathing and body sway.', 'Keep the rotation pivot low and place the breathing region over the chest.'],
+    fullBody: ['Full body', 'Torso, arms, hands, hips, legs and feet.', 'Drag each joint. Detect joints places them from the picture; switch the detector if a drawing is missed. Arrow keys nudge the selected joint, and Mirror copies the left side across.'],
     hand: ['Hand', 'Hand outline and arm joints.', 'Trace the hand outline, then place the wrist and elbow joints.'],
     mesh: ['Mesh', 'Mesh density.', 'Smaller cells add detail around the face but take more time to render.'],
     view: ['Framing', 'Preview margins.', 'Adjust the margins so the head and accessories stay inside the preview.'],
@@ -123,6 +156,7 @@ const partText: Record<Language, Record<PartGroup, [string, string, string]>> = 
     buns: ['お団子', 'まとまって揺れる範囲。', '顔を含めず、お団子を囲むように円を合わせてください。'],
     accessories: ['飾り', '房飾りなどの振り子。', '付け根に支点を置き、いちばん下に先端を合わせてください。'],
     body: ['体', '呼吸と体の揺れ。', '回転の支点を低い位置に置き、呼吸の範囲を胸に合わせてください。'],
+    fullBody: ['全身', '胴・腕・手・腰・脚・足の関節。', '各関節をドラッグします。「関節を検出」で絵から仮配置します。線画で外れたら検出方法を切り替えてください。矢印キーで選択中の関節を微調整し、「左を右へコピー」で反対側を合わせます。'],
     hand: ['手', '手の輪郭と腕の関節。', '手の輪郭をなぞってから、手首と肘の位置を合わせてください。'],
     mesh: ['メッシュ', 'メッシュの細かさ。', '格子を細かくすると顔の表現が細かくなりますが、描画の負荷が増えます。'],
     view: ['表示範囲', 'プレビューの余白。', '頭や飾りがプレビューからはみ出さないように余白を調整してください。'],
@@ -150,6 +184,13 @@ const fieldText: Record<string, [string, string]> = {
   handCell: ['Hand cell size', '手の格子幅'], tasselCell: ['Accessory cell size', '飾りの格子幅'], eyeBallCell: ['Iris cell size', '瞳の格子幅'],
   eyeCell: ['Eye cell size', '目の格子幅'], spriteCell: ['Drawing cell size', '差し替え画像の格子幅'],
   padTop: ['Top margin', '上の余白'], padSide: ['Side margin', '左右の余白'], gazeCenter: ['Gaze centre', '視線の中心'], start: ['Start', '始点'], end: ['End', '終点'],
+  fullBody: ['Full body', '全身'], sway: ['Idle sway', '待機の揺れ'], armFollow: ['Arm follow', '腕の追従'],
+  bones: ['Joints', '関節'], torso: ['Torso', '胴'], hips: ['Hips', '腰'],
+  upperArmL: ['Image-left upper arm', '向かって左の上腕'], lowerArmL: ['Image-left forearm', '向かって左の前腕'], handL: ['Image-left hand', '向かって左の手'],
+  upperArmR: ['Image-right upper arm', '向かって右の上腕'], lowerArmR: ['Image-right forearm', '向かって右の前腕'], handR: ['Image-right hand', '向かって右の手'],
+  upperLegL: ['Image-left thigh', '向かって左の太もも'], lowerLegL: ['Image-left shin', '向かって左のすね'], footL: ['Image-left foot', '向かって左の足'],
+  upperLegR: ['Image-right thigh', '向かって右の太もも'], lowerLegR: ['Image-right shin', '向かって右のすね'], footR: ['Image-right foot', '向かって右の足'],
+  radius: ['Influence radius', '影響の半径'], maxBend: ['Bend at full pose', '最大ポーズの曲がり'],
 };
 export function fieldTitle(path: string, language: Language) {
   const t = dictionaries[language];

@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "build": "parts-2",
+  "cutout": {
+    "base": "base_cut",
+    "under": [
+      "torso_hidden"
+    ],
+    "over": [
+      "cap_shoulderL",
+      "cap_shoulderR",
+      "hair_front"
+    ]
+  },
+  "layers": {
+    "upperArmL_front": [
+      203,
+      255,
+      57,
+      211
+    ],
+    "upperArmL_back": [
+      203,
+      255,
+      57,
+      211
+    ],
+    "lowerArmL_front": [
+      175,
+      443,
+      69,
+      159
+    ],
+    "lowerArmL_back": [
+      175,
+      443,
+      69,
+      159
+    ],
+    "handL_front": [
+      177,
+      588,
+      35,
+      82
+    ],
+    "handL_back": [
+      177,
+      588,
+      35,
+      82
+    ],
+    "handL_fist": [
+      177,
+      588,
+      35,
+      82
+    ],
+    "upperArmR_front": [
+      447,
+      243,
+      67,
+      223
+    ],
+    "upperArmR_back": [
+      447,
+      243,
+      67,
+      223
+    ],
+    "lowerArmR_front": [
+      457,
+      437,
+      74,
+      168
+    ],
+    "lowerArmR_back": [
+      457,
+      437,
+      74,
+      168
+    ],
+    "handR_front": [
+      479,
+      587,
+      45,
+      88
+    ],
+    "handR_back": [
+      479,
+      587,
+      45,
+      88
+    ],
+    "handR_fist": [
+      479,
+      587,
+      45,
+      88
+    ],
+    "upperLegL_front": [
+      251,
+      598,
+      102,
+      314
+    ],
+    "upperLegL_back": [
+      251,
+      598,
+      102,
+      314
+    ],
+    "lowerLegL_front": [
+      254,
+      863,
+      105,
+      305
+    ],
+    "lowerLegL_back": [
+      254,
+      863,
+      105,
+      305
+    ],
+    "footL_front": [
+      221,
+      1110,
+      124,
+      111
+    ],
+    "footL_back": [
+      221,
+      1110,
+      124,
+      111
+    ],
+    "upperLegR_front": [
+      364,
+      588,
+      137,
+      327
+    ],
+    "upperLegR_back": [
+      364,
+      588,
+      137,
+      327
+    ],
+    "lowerLegR_front": [
+      380,
+      880,
+      123,
+      277
+    ],
+    "lowerLegR_back": [
+      380,
+      880,
+      123,
+      277
+    ],
+    "footR_front": [
+      411,
+      1111,
+      89,
+      136
+    ],
+    "footR_back": [
+      411,
+      1111,
+      89,
+      136
+    ],
+    "base_cut": [
+      0,
+      0,
+      720,
+      1280
+    ],
+    "torso_hidden": [
+      201,
+      279,
+      302,
+      393
+    ],
+    "cap_shoulderL": [
+      243,
+      255,
+      25,
+      47
+    ],
+    "cap_shoulderR": [
+      441,
+      247,
+      63,
+      52
+    ],
+    "hair_front": [
+      394,
+      270,
+      132,
+      167
+    ]
+  },
+  "bindings": [
+    {
+      "bone": "upperArmL",
+      "side": "L",
+      "kind": "limb",
+      "front": "upperArmL_front",
+      "back": "upperArmL_back"
+    },
+    {
+      "bone": "lowerArmL",
+      "side": "L",
+      "kind": "limb",
+      "front": "lowerArmL_front",
+      "back": "lowerArmL_back"
+    },
+    {
+      "bone": "handL",
+      "side": "L",
+      "kind": "hand",
+      "front": "handL_front",
+      "back": "handL_back",
+      "fist": "handL_fist"
+    },
+    {
+      "bone": "upperArmR",
+      "side": "R",
+      "kind": "limb",
+      "front": "upperArmR_front",
+      "back": "upperArmR_back"
+    },
+    {
+      "bone": "lowerArmR",
+      "side": "R",
+      "kind": "limb",
+      "front": "lowerArmR_front",
+      "back": "lowerArmR_back"
+    },
+    {
+      "bone": "handR",
+      "side": "R",
+      "kind": "hand",
+      "front": "handR_front",
+      "back": "handR_back",
+      "fist": "handR_fist"
+    },
+    {
+      "bone": "upperLegL",
+      "side": "L",
+      "kind": "limb",
+      "front": "upperLegL_front",
+      "back": "upperLegL_back"
+    },
+    {
+      "bone": "lowerLegL",
+      "side": "L",
+      "kind": "limb",
+      "front": "lowerLegL_front",
+      "back": "lowerLegL_back"
+    },
+    {
+      "bone": "footL",
+      "side": "L",
+      "kind": "limb",
+      "front": "footL_front",
+      "back": "footL_back"
+    },
+    {
+      "bone": "upperLegR",
+      "side": "R",
+      "kind": "limb",
+      "front": "upperLegR_front",
+      "back": "upperLegR_back"
+    },
+    {
+      "bone": "lowerLegR",
+      "side": "R",
+      "kind": "limb",
+      "front": "lowerLegR_front",
+      "back": "lowerLegR_back"
+    },
+    {
+      "bone": "footR",
+      "side": "R",
+      "kind": "limb",
+      "front": "footR_front",
+      "back": "footR_back"
+    }
+  ]
+}

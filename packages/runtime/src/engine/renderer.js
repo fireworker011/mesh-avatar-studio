@@ -3,10 +3,73 @@ import { DEFAULT_LIGHTING, parseLighting } from '../lighting/settings';
 import { TERMINATOR, DETAIL_SCALE, SHADOW_SATURATION, MAX_IRRADIANCE, headRotation } from '../lighting/shading';
 import { DropShadow } from '../lighting/shadow';
 
+// A bust eye is about 95px across: 14 base cells (fine cell 7), 32 lash cells (eye cell 3),
+// 24 iris cells (ball cell 4) and 24 sprite cells. A full-body face is a small part of the
+// picture, so the same pixel cell leaves only a few quads across that eye.
+const BUST_CELLS = { base: 14, lash: 32, ball: 24, sprite: 24 };
+// The bust sample's eye is about 95px wide. Mouth height, blush, gaze and the extra
+// brow/feature offsets were chosen in those pixels.
+const BUST_EYE = 95;
+
+function featureSpan(points) {
+  if (!points?.length) return 0;
+  let min = Infinity, max = -Infinity;
+  for (const point of points) {
+    if (point[0] < min) min = point[0];
+    if (point[0] > max) max = point[0];
+  }
+  return max - min;
+}
+
+function densityCell(span, across, configured) {
+  if (!(span > 4)) return configured;
+  const needed = span / across;
+  // Already as fine as a bust face of this size. Bust rigs never reach this helper.
+  if (needed >= configured * 0.9) return configured;
+  return Math.max(0.5, needed);
+}
+
+/**
+ * Extra face grid for a full-body rig whose eyes are small in the picture.
+ * Bust rigs, and a full-body face that is already bust-sized, get no change.
+ * @param {import('../rig/types').Rig} rig
+ */
+export function faceDensity(rig) {
+  const configured = {
+    fine: rig.mesh.fine?.cell ?? rig.mesh.baseCell,
+    eye: rig.mesh.eyeCell,
+    ball: rig.mesh.eyeBallCell,
+    sprite: rig.mesh.spriteCell,
+  };
+  if (!rig.fullBody) return { region: null, eyeCell: configured.eye, ballCell: configured.ball, spriteCell: configured.sprite, scale: 1 };
+  let span = 0;
+  for (const eye of rig.eyes ?? []) {
+    const width = featureSpan(eye.opening);
+    if (width > 4) span = span ? Math.min(span, width) : width;
+  }
+  if (!span && rig.mouth?.halfLen > 2) span = rig.mouth.halfLen * 2;
+  const fineCell = densityCell(span, BUST_CELLS.base, configured.fine);
+  const fine = rig.mesh.fine;
+  const region = fine && fineCell < configured.fine
+    ? { x0: fine.x0, x1: fine.x1, y0: fine.y0, y1: fine.y1, cell: fineCell }
+    : null;
+  // A bust-sized eye keeps the authored pixel distances. A smaller full-body eye
+  // shrinks them so a blink-sized move stays a blink, not a shove across the face.
+  const scale = span > 4 && span / BUST_EYE < 0.9 ? span / BUST_EYE : 1;
+  return {
+    region,
+    eyeCell: densityCell(span, BUST_CELLS.lash, configured.eye),
+    ballCell: densityCell(span, BUST_CELLS.ball, configured.ball),
+    spriteCell: densityCell(span, BUST_CELLS.sprite, configured.sprite),
+    scale,
+  };
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createRenderer(engine, rig) {
   const { IMG, EYES, MOUTH, CHEEKS } = engine;
+  const faceScale = faceDensity(rig).scale;
   // WebGL2 renderer: textured grid meshes whose vertices are deformed on the CPU,
   // plus a fragment-shader pass for eyelids, eye balls, mouth and blush on the base layer.
 
@@ -32,6 +95,7 @@ export function createRenderer(engine, rig) {
   uniform vec4 uMouthState;  // open, form, bow, -
   uniform vec4 uCheeks;      // x0, y0, x1, y1
   uniform float uCheek;
+  uniform float uFaceScale; // 1 on a bust; smaller when a full-body eye is a small part of the picture
 
   const int EYE_N = 24;
   float crv(int e, bool top, float u) {
@@ -95,8 +159,9 @@ export function createRenderer(engine, rig) {
     if (k <= 0.0) return base;
     float line = uMouthState.z * (1.0 - s * s);
     float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
-    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0));
-    float up = line - 0.6 - open * 2.5 * hk;
+    float px = max(uFaceScale, 0.05);
+    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0)) * px;
+    float up = line - (0.6 + open * 2.5 * hk) * px;
     float lo = line + open * H * hk;
     float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
     if (cov <= 0.0) return base;
@@ -111,16 +176,81 @@ export function createRenderer(engine, rig) {
     return vec4(mix(base.rgb, col, cov), 1.0);
   }
 
+  // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
+  // brow and temple pixels from that cut-out across the eye. Cover the opening with skin
+  // taken from just under it, and draw one lash arc that dips in the middle. Nothing
+  // outside the traced opening is touched. A bust (uFaceScale 1) returns the base unchanged.
+  vec4 paintClosedEye(int e, vec2 p, vec4 base) {
+    if (uFaceScale > 0.9) return base;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    if (close < 0.01) return base;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return base;
+    float u = (p.x - box.x) / span;
+    if (u < 0.0 || u > 1.0) return base;
+    float top = crv(e, true, u), bot = crv(e, false, u);
+    float H = max(bot - top, 1.0);
+    // One-pixel feather at the opening edge, so the lid stays inside the drawn eye.
+    float side = smoothstep(0.0, 1.2 / span, u) * (1.0 - smoothstep(1.0 - 1.2 / span, 1.0, u));
+    float vert = smoothstep(top - 0.4, top + 0.6, p.y) * (1.0 - smoothstep(bot - 0.2, bot + 0.8, p.y));
+    float cover = side * vert * close;
+    if (cover <= 0.001) return base;
+    float sampleY = bot + max(3.0, H * 0.85);
+    vec2 sampleAt = vec2(clamp(p.x, box.x + span * 0.3, box.y - span * 0.3), sampleY);
+    vec3 skin = texAt(sampleAt).rgb;
+    float skinL = dot(skin, vec3(0.2126, 0.7152, 0.0722));
+    if (skinL < 0.22) skin = texAt(sampleAt + vec2(0.0, H)).rgb;
+    vec4 c = base;
+    c.rgb = mix(c.rgb, skin, cover);
+    float smile = clamp(uEyeState[e].y, 0.0, 1.0);
+    float hump = 4.0 * u * (1.0 - u);
+    // A single thin curve: corners in the upper half, the middle dipping a little.
+    // A smile lifts that dip. Kept thin so it reads as a drawn lash, not a squashed iris.
+    float lid = mix(top, bot, 0.46) + H * (0.08 - 0.28 * smile) * hump;
+    float thick = max(1.25, H * 0.05);
+    float taper = smoothstep(0.0, 0.12, u) * (1.0 - smoothstep(0.88, 1.0, u));
+    float lash = exp(-((p.y - lid) * (p.y - lid)) / (thick * thick)) * close * side * taper;
+    vec3 ink = vec3(0.08, 0.045, 0.035) * max(c.a, cover);
+    c.rgb = mix(c.rgb, ink, clamp(lash, 0.0, 0.98));
+    return c;
+  }
+
+  // The lash cut-out also holds the brow. Fading the whole layer would erase it, and
+  // sliding the mesh would smear it. Hide only the ink inside the opening.
+  vec4 maskEyePart(int e, vec2 p, vec4 c) {
+    if (uFaceScale > 0.9) return c;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    if (close < 0.01 || c.a < 0.01) return c;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return c;
+    float u = (p.x - box.x) / span;
+    if (u < -0.04 || u > 1.04) return c;
+    float uu = clamp(u, 0.0, 1.0);
+    float top = crv(e, true, uu), bot = crv(e, false, uu);
+    float H = max(bot - top, 1.0);
+    // The open-eye ink, including the upper lash just above the opening. The brow
+    // sits further up and is left as drawn.
+    float above = top - max(3.0, H * 0.22);
+    float side = smoothstep(-0.02, 0.03, u) * (1.0 - smoothstep(0.97, 1.02, u));
+    float inside = smoothstep(above - 0.4, above + 0.8, p.y) * (1.0 - smoothstep(bot + 0.2, bot + 1.8, p.y));
+    return c * (1.0 - inside * side * close);
+  }
+
   void main() {
     vec2 p = uRect.xy + vUv * uRect.zw;
     vec4 c;
     if (uFace == 1) {
-      c = mouth(p, texAt(p));
-      float blush = exp(-dot((p - uCheeks.xy) / vec2(48.0, 22.0), (p - uCheeks.xy) / vec2(48.0, 22.0)))
-                  + exp(-dot((p - uCheeks.zw) / vec2(40.0, 20.0), (p - uCheeks.zw) / vec2(40.0, 20.0)));
+      c = paintClosedEye(1, p, paintClosedEye(0, p, mouth(p, texAt(p))));
+      vec2 blushA = vec2(48.0, 22.0) * uFaceScale, blushB = vec2(40.0, 20.0) * uFaceScale;
+      float blush = exp(-dot((p - uCheeks.xy) / blushA, (p - uCheeks.xy) / blushA))
+                  + exp(-dot((p - uCheeks.zw) / blushB, (p - uCheeks.zw) / blushB));
       c.rgb = mix(c.rgb, c.rgb * vec3(1.0, 0.62, 0.64) , clamp(blush * uCheek * 0.55, 0.0, 1.0) * c.a);
-    } else if (uFace >= 2) {
+    } else if (uFace == 2 || uFace == 3) {
       c = eyeBall(uFace - 2, p);
+    } else if (uFace == 4 || uFace == 5) {
+      c = maskEyePart(uFace - 4, p, texAt(p));
     } else {
       c = texAt(p);
     }
@@ -199,11 +329,17 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid lines along one axis: `cell` spacing, `fine.cell` inside [fine.from, fine.to).
-  function axis(start, len, cell, fine) {
+  // Optional extra intervals (elbows and knees) use a smaller cell. With none, the
+  // spacing matches the single fine rectangle.
+  function axis(start, len, cell, fine, extra = null) {
     const out = [start];
     let v = start;
     while (v < start + len - 0.5) {
-      const c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      let c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      if (extra) for (let i = 0; i < extra.length; i++) {
+        const region = extra[i];
+        if (v >= region.from && v < region.to && region.cell < c) c = region.cell;
+      }
       v = Math.min(start + len, v + c);
       out.push(v);
     }
@@ -211,11 +347,13 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid mesh over a layer rect (optionally denser inside `fine`); cells that are fully
-  // transparent are dropped.
-  function buildGrid(rect, cell, alpha, alphaW, fine = null) {
+  // transparent are dropped. `regions` are extra dense rectangles, used around hinges.
+  function buildGrid(rect, cell, alpha, alphaW, fine = null, regions = null) {
     const [rx, ry, rw, rh] = rect;
-    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell });
-    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell });
+    const extraX = regions && regions.map(region => ({ from: region.x0, to: region.x1, cell: region.cell }));
+    const extraY = regions && regions.map(region => ({ from: region.y0, to: region.y1, cell: region.cell }));
+    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell }, extraX);
+    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell }, extraY);
     const cols = xs.length - 1, rows = ys.length - 1;
     const nv = (cols + 1) * (rows + 1);
     const rest = new Float32Array(nv * 2), uv = new Float32Array(nv * 2);
@@ -243,6 +381,70 @@ export function createRenderer(engine, rig) {
       if (j === rows - 1) lines.push(c, d);
     }
     return { rect, cols, rows, rest, uv, pos: new Float32Array(rest), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
+  }
+
+  // Mesh for a rigid cut-out: `cell`-sized squares inside the drawing and `edge`-pixel
+  // squares wherever a square holds both drawn and empty pixels, so the triangles follow the
+  // outline within `edge` px. All vertices sit on one `edge` lattice. The cut-out moves as one
+  // rigid piece, so the T-junctions where the two sizes meet cannot open.
+  function buildContourGrid(rect, cell, alpha, alphaW, edge = 2) {
+    const [rx, ry, rw, rh] = rect;
+    const alphaH = alpha.length / alphaW;
+    const opaqueQuad = alphaW === 1;
+    // summed-area tables of drawn (alpha > 3) and solid (alpha > 250) pixels
+    const W1 = alphaW + 1;
+    const drawn = new Int32Array(W1 * (alphaH + 1)), solid = new Int32Array(W1 * (alphaH + 1));
+    for (let y = 0; y < alphaH; y++) {
+      let rowDrawn = 0, rowSolid = 0;
+      for (let x = 0; x < alphaW; x++) {
+        const a = alpha[y * alphaW + x];
+        rowDrawn += a > 3 ? 1 : 0; rowSolid += a > 250 ? 1 : 0;
+        drawn[(y + 1) * W1 + x + 1] = drawn[y * W1 + x + 1] + rowDrawn;
+        solid[(y + 1) * W1 + x + 1] = solid[y * W1 + x + 1] + rowSolid;
+      }
+    }
+    const box = (table, x0, y0, x1, y1) => table[y1 * W1 + x1] - table[y0 * W1 + x1] - table[y1 * W1 + x0] + table[y0 * W1 + x0];
+    // `any`: a drawn pixel within the square grown by `margin`; `full`: every pixel of the grown square is solid
+    function coverage(px0, py0, px1, py1, margin) {
+      if (opaqueQuad) return { any: true, full: true };
+      const x0 = Math.max(0, px0 - margin), y0 = Math.max(0, py0 - margin);
+      const x1 = Math.min(alphaW, px1 + margin), y1 = Math.min(alphaH, py1 + margin);
+      if (x1 <= x0 || y1 <= y0) return { any: false, full: false };
+      const area = (px1 + margin - (px0 - margin)) * (py1 + margin - (py0 - margin));
+      return { any: box(drawn, x0, y0, x1, y1) > 0, full: box(solid, x0, y0, x1, y1) === area };
+    }
+    const nx = Math.ceil(rw / edge), ny = Math.ceil(rh / edge);
+    const k = Math.max(1, Math.round(cell / edge));
+    const index = new Map(), rest = [], uv = [], tris = [], lines = [];
+    const vertex = (i, j) => {
+      const key = j * (nx + 1) + i;
+      let v = index.get(key);
+      if (v === undefined) {
+        v = rest.length / 2;
+        const x = rx + Math.min(rw, i * edge), y = ry + Math.min(rh, j * edge);
+        rest.push(x, y);
+        uv.push((x - rx) / rw, (y - ry) / rh);
+        index.set(key, v);
+      }
+      return v;
+    };
+    const emit = (i0, j0, i1, j1) => {
+      const a = vertex(i0, j0), b = vertex(i1, j0), c = vertex(i0, j1), d = vertex(i1, j1);
+      tris.push(a, b, c, b, d, c);
+      lines.push(a, b, a, c, b, c, b, d, c, d);
+    };
+    const px = i => Math.min(rw, i * edge), py = j => Math.min(rh, j * edge);
+    for (let J = 0; J < ny; J += k) for (let I = 0; I < nx; I += k) {
+      const I1 = Math.min(nx, I + k), J1 = Math.min(ny, J + k);
+      const coarse = coverage(px(I), py(J), px(I1), py(J1), 2);
+      if (!coarse.any) continue;
+      if (coarse.full) { emit(I, J, I1, J1); continue; }
+      for (let j = J; j < J1; j++) for (let i = I; i < I1; i++) {
+        if (coverage(px(i), py(j), px(i + 1), py(j + 1), 1).any) emit(i, j, i + 1, j + 1);
+      }
+    }
+    const restArray = new Float32Array(rest);
+    return { rect, cols: 0, rows: 0, rest: restArray, uv: new Float32Array(uv), pos: new Float32Array(restArray), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
   }
 
   class Renderer {
@@ -302,6 +504,21 @@ export function createRenderer(engine, rig) {
       const layer = { name, image: img, mesh, tex: this.texture(img), vao, posBuf, uvBuf, triBuf, lineBuf, visible: true, face: !!opts.face, eyeBall: opts.eyeBall, color: opts.color || [1, 1, 1, 1] };
       this.layers.push(layer);
       return layer;
+    }
+
+    /** Move a layer under the body or just above it, leaving the eyes and mouth drawings on top. */
+    placeLayer(name, phase) {
+      const index = this.layers.findIndex(layer => layer.name === name);
+      if (index < 0) return;
+      const [layer] = this.layers.splice(index, 1);
+      if (phase === 'behind') {
+        const base = this.layers.findIndex(item => item.name === 'base');
+        this.layers.splice(Math.max(0, base), 0, layer);
+        return;
+      }
+      const over = this.layers.findIndex(item => /^(eye|eyes_|mouth_|hair)/.test(item.name));
+      if (over < 0) this.layers.push(layer);
+      else this.layers.splice(over, 0, layer);
     }
 
     destroy() {
@@ -394,6 +611,7 @@ export function createRenderer(engine, rig) {
       gl.uniform4f(m.u.uMouthState, state.mouthOpen, state.mouthForm, MOUTH.bow, 0);
       gl.uniform4f(m.u.uCheeks, CHEEKS[0][0], CHEEKS[0][1], CHEEKS[1][0], CHEEKS[1][1]);
       gl.uniform1f(m.u.uCheek, state.cheek);
+      gl.uniform1f(m.u.uFaceScale, faceScale);
       gl.activeTexture(gl.TEXTURE0);
 
       for (const L of this.layers) {
@@ -430,7 +648,8 @@ export function createRenderer(engine, rig) {
       if (this.lighting.enabled) { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, L.normal); gl.activeTexture(gl.TEXTURE0); }
       gl.bindTexture(gl.TEXTURE_2D, L.tex);
       gl.uniform4fv(m.u.uRect, L.mesh.rect);
-      gl.uniform1i(m.u.uFace, L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : 0);
+      const faceId = L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : L.eyeMask !== undefined ? 4 + L.eyeMask : 0;
+      gl.uniform1i(m.u.uFace, faceId);
       gl.uniform1f(m.u.uAlpha, alpha);
       gl.drawElements(gl.TRIANGLES, L.mesh.tris.length, gl.UNSIGNED_INT, 0);
     }
@@ -452,6 +671,16 @@ export function createRenderer(engine, rig) {
       gl.drawArrays(gl.POINTS, 0, pts.length);
     }
 
+    setTriangleOrder(name, tris) {
+      const layer = this.layers.find(item => item.name === name);
+      if (!layer) return;
+      const gl = this.gl;
+      gl.bindVertexArray(layer.vao);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, layer.triBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tris, gl.DYNAMIC_DRAW);
+      gl.bindVertexArray(null);
+    }
+
     // canvas CSS px -> source image px
     toImage(cx, cy) {
       if (!this.pxOff) return null;   // pointer moved before the first frame was drawn
@@ -459,5 +688,5 @@ export function createRenderer(engine, rig) {
       return [(cx * dpr - this.pxOff[0]) / this.pxScale, (cy * dpr - this.pxOff[1]) / this.pxScale];
     }
   }
-  return { Renderer, buildGrid };
+  return { Renderer, buildGrid, buildContourGrid };
 }

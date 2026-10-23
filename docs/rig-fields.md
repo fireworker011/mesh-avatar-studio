@@ -10,8 +10,16 @@ radii and mesh cell sizes must be positive. Mesh cell sizes and fine-mesh rectan
 coordinates must be integers. Accessory boxes must be integer rectangles inside the image. A band is `[start, end]` with `start < end`.
 Ellipses are smooth influence regions, not hard cut-out boundaries.
 
-Only `buns`, `strands`, `accessories`, `hand` and `view.gazeCenter` are optional. Omit absent
+Only `buns`, `strands`, `accessories`, `hand`, `fullBody` and `view.gazeCenter` are optional. Omit absent
 optional groups. Required regions must still be placed even if their animation will be small.
+`fullBody` is present only for a standing figure. A bust rig omits it and deforms exactly as before.
+With it set, each limb segment rotates rigidly and only a short band at the joint blends, and
+hair and tassel anchors follow that same chain. The bust path does not.
+An optional anatomical pose (separate from these fields; see [pose-system-issues.md](pose-system-issues.md))
+can drive the same bones with joint limits. Leaving that pose unset keeps the limb sliders.
+A full-body eye that is much smaller than the bust sample also gets a finer face grid, and the
+painted mouth, blush, iris travel and the extra brow and feature offsets shrink with that eye.
+Head shift, roll and the traced eyelids already come from the rig, so they are left alone. See [full-body-research.md](full-body-research.md).
 The initial draft has empty eye polygons and is intentionally invalid until they are traced.
 See [agent-guide.md](agent-guide.md) for the process and [rig-mapping.md](rig-mapping.md) for
 the engine mapping. Do not copy the example illustration's coordinates into a new image.
@@ -137,7 +145,7 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `mesh.fine.x1` | Refinement rectangle right x, px; greater than x0. |
 | `mesh.fine.y0` | Refinement rectangle top y, px; above crown/hair. |
 | `mesh.fine.y1` | Refinement rectangle bottom y, px; below chin/hair tips. |
-| `mesh.fine.cell` | Fine base-layer cell spacing, px; example `7`, reduce only when detail needs it. |
+| `mesh.fine.cell` | Fine base-layer cell spacing, px; example `7`, reduce only when detail needs it. A full-body rig whose eyes are much smaller than a bust keeps this value, and the runtime also subdivides that face rectangle (and the eye, iris and sprite grids) so an eye still has about as many cells across it as the bust sample. A bust rig is not subdivided further. |
 | `mesh.handCell` | Hand-layer cell spacing, px; example `9`. |
 | `mesh.tasselCell` | Hanging-accessory cell spacing, px; example `6`. |
 | `mesh.eyeBallCell` | Eye white/iris layer cell spacing, px; example `4`. |
@@ -146,6 +154,13 @@ the engine mapping. Do not copy the example illustration's coordinates into a ne
 | `view.padTop` | Top viewport margin as fraction of source height; negative crops crown, must be between -1 and 1. |
 | `view.padSide` | Each side viewport margin as fraction of source width; start at `0`, must exceed -0.5. |
 | `view.gazeCenter` | Optional pointer-follow origin `[x,y]`, px; between eyes; defaults to head centre. |
+| `fullBody.sway` | Idle limb amplitude, 0–1. `0` keeps the standing pose still. |
+| `fullBody.armFollow` | How strongly the arms counter body roll, 0–1. |
+| `fullBody.bones.<name>.pivot` | Joint centre `[x,y]`, px. Image-left is L. Names: `torso`, `hips`, `upperArmL`, `lowerArmL`, `handL`, `upperArmR`, `lowerArmR`, `handR`, `upperLegL`, `lowerLegL`, `footL`, `upperLegR`, `lowerLegR`, `footR`. |
+| `fullBody.bones.<name>.tip` | Far end of that segment `[x,y]`, px; must differ from the pivot. |
+| `fullBody.bones.<name>.radius` | Influence width, px; about half the limb width. |
+| `fullBody.bones.<name>.maxBend` | Rotation in radians at pose +1. Positive rotates a downward tip toward image-left, so the image-right limb uses a negative value to swing outward. |
+| `fullBody.fingers.L` / `fullBody.fingers.R` | Optional. A polyline of `[x, y]` points, px, from the wrist outward, at least two points. Each step is a hinge parented to the wrist. Omit both and the hand stays one bone. |
 
 Draft validation accepts omitted `x0/x1/top/bot` only as a complete group; supplying some of
 the four fields is an error. Complete rigs always require all four. Changing eye geometry
