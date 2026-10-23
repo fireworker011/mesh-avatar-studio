@@ -50,7 +50,7 @@ def compose(out, tag, sample):
     size = (rig['image']['width'], rig['image']['height'])
     span = abs(bones['upperArmR']['pivot'][0] - bones['upperArmL']['pivot'][0])
     frame = lambda name: load(out, sample, name)
-    poses = ['rest', 'armL50', 'armR50', 'elbow', 'kneeL', 'sit', 'yawR', 'yawL']
+    poses = ['rest', 'armL50', 'armR50', 'elbow', 'kneeL', 'sit', 'yawR', 'yawL', 'fist', 'behind', 'twist']
     sheet([(name, frame(name)) for name in poses], 300, 700, 4,
           f'{sample}: rest, image-left arm +50 deg, image-right arm +50 deg, elbows, left knee 45 deg, sit, body yaw right, left'
           ).save(out / f'{tag}-{sample}-poses.png')
@@ -64,7 +64,9 @@ def compose(out, tag, sample):
     detail = [('armL50', 'shoulder', bones['upperArmL']['pivot'], 0.2), ('armR50', 'shoulder', bones['upperArmR']['pivot'], 0.2),
               ('elbowL', 'L elbow', bones['lowerArmL']['pivot'], 0.2), ('elbowL', 'R elbow', bones['lowerArmR']['pivot'], 0.2),
               ('kneeL', 'knee', bones['lowerLegL']['pivot'], 0.2), ('sit', 'hip', bones['upperLegL']['pivot'], 0.35),
-              ('yawR', 'L shoulder', bones['upperArmL']['pivot'], 0.2), ('yawL', 'R shoulder', bones['upperArmR']['pivot'], 0.2)]
+              ('yawR', 'L shoulder', bones['upperArmL']['pivot'], 0.2), ('yawL', 'R shoulder', bones['upperArmR']['pivot'], 0.2),
+              ('fist', 'hand', bones['handL']['pivot'], 0.28), ('behind', 'arm', bones['upperArmL']['pivot'], 0.4),
+              ('twist', 'shoulder', bones['upperArmL']['pivot'], 0.35)]
     sheet([(f'{name} {where}', crop(frame(name), centre, span * r, size)) for name, where, centre, r in detail], 400, 400, 4,
           f'{sample}: joint detail, enlarged').save(out / f'{tag}-{sample}-detail.png')
     eyes = rig['eyes']

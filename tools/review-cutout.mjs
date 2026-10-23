@@ -55,6 +55,12 @@ const FRAMES = [
   ['mouthU', { mouthOpen: 0.9, mouthForm: 0.95 }, {}],
   ['mouthE', { mouthOpen: 0.9, mouthForm: -0.38 }, {}],
   ['mouthO', { mouthOpen: 0.9, mouthForm: 0.55 }, {}],
+  // Hands curl, arms pass behind the torso, shoulders twist far enough to swap the back drawing.
+  ['fist', {}, {}, { hands: { L: 1, R: 1 } }],
+  ['behind', {}, { shoulderL: 30, shoulderR: -30, elbowL: -25, elbowR: 25 }, {
+    drawOrder: { upperArmL: -2, lowerArmL: -2, handL: -2, upperArmR: -2, lowerArmR: -2, handR: -2 },
+  }],
+  ['twist', {}, { shoulderL: 20, shoulderR: -20 }, { twist: { shoulderL: 75, shoulderR: -75 } }],
 ];
 
 async function main() {
@@ -117,9 +123,14 @@ async function main() {
         }
         const skeleton = runtime.buildSkeleton(rig);
         const urls = { restPlain: restPlain.toDataURL('image/png') };
-        for (const [name, params, joints] of frames) {
+        for (const [name, params, joints, extra] of frames) {
           const pose = runtime.restPose(skeleton);
           for (const [joint, degrees] of Object.entries(joints)) pose.joints[joint] = { swing: degrees * Math.PI / 180, twist: 0 };
+          if (extra?.twist) for (const [joint, degrees] of Object.entries(extra.twist)) {
+            pose.joints[joint] = { ...(pose.joints[joint] ?? { swing: 0, twist: 0 }), twist: degrees * Math.PI / 180 };
+          }
+          if (extra?.hands) pose.hands = extra.hands;
+          if (extra?.drawOrder) pose.drawOrder = extra.drawOrder;
           cut.avatar.setParameters({ ...still, ...params });
           cut.avatar.setSkeletonPose(pose);
           cut.avatar.advance(0);

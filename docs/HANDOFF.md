@@ -28,6 +28,15 @@
 - e50c8b0 確認用のレンダー: tools/review-cutout.mjs と tools/compose_cutout_review.py。
 - changeset は .changeset/cutout-limbs.md（minor）を足し、.changeset/body-parts.md の文言を今の動作に合わせた。
 
+## この回で足したこと
+
+- 隠れ部分の塗りを Telea から、その層の画素の継続に変えた。マットの薄灰色は袖に載せない。親の端のフェードを、子が同じ画素を持っている帯で 0 まで伸ばした。
+- 口は元の唇の画素から `mouth_a` `mouth_a_half` `mouth_i` `mouth_u` `mouth_e` `mouth_o` を別々に描く。`ImageDraw.ellipse` は使っていない。シートに `mouth_e` / `mouth_u` が無いバストは、いままで通り half あ の横伸ばしと お の幅縮み（Sprite regression 0 px）。
+- 閉じ目は目ごとに測ったまつ毛の芯の太さで、開口部の内側に 1 本。眉は lash レイヤーから、まつ毛の筋と分かれているものだけ写す。
+- 全身の房の点は、頭・肩・胸の楕円へ休止位置より深く入らない。バストの物理にはこの処理を入れていない。胸の画素は押していない。
+- photo の hairmask はシャツとズボンと顔の肌を外した（90292 px → 21994 px）。backL / backR は y=562 のまま。シャツの画素は髪ではないので、房と一緒には揺れない。
+- `parts.json` の `cutout` が指すレイヤーを validate する。型エラー 6 件は直した。確認フレームに拳・裏・twist を足した。
+
 ## 残っている粗と再現方法
 
 再現はすべて次の 2 行で出る。出力は work/cutout-review/ で、git には入らない。
@@ -39,32 +48,17 @@ uv run --with pillow tools/compose_cutout_review.py --tag check
 
 開くファイルは work/cutout-review/check-<サンプル>-poses.png、-joints.png、-detail.png、-face.png。
 
-### 構図（手順 1 の残り）
+見た絵にまだ残っているもの。
 
-1. photo の armR50 と armL50（-joints.png、-detail.png）では、上げた袖の内側（胴に接していた側）の縁がギザギザしている。元絵のマットが残した不透明な薄灰色の画素が袖と一緒に動き、薄い縁に見える。
-2. photo の armL50 と elbow では、髪の下に隠れていた袖が出てくると、平らなぼかし塗りに見える（Telea の塗り）。
-3. photo の elbow（-joints.png の elbow zoom）では、曲げた前腕の内側の縁が暗くギザギザしている。
-4. photo の sit（-joints.png の sit zoom）では、太ももの付け根（y=600 の切れ目）が横一線のギザギザとして見える。
-5. coat の sit（-detail.png の sit hip）では、コートの下から出た太ももの隠れ部分が、明るい灰色の平らな四角に見える。
-6. coat の armL50（-detail.png）では、上げた左袖の下側の縁がギザギザしていて、肩に白い点がある。coat の armR50 では、髪の脇に明るいくさびが見える。
-7. vest の kneeL と elbowL（-detail.png）では、親の端をフェードさせたが、膝と肘に陰影の段差として直線の切れ目がまだ見える。vest の armL50 では袖ぐりの上端に小さな点があり、yaw の肩にも点が 1 つある。
-8. 拳（*_fist）と裏（*_back）はレビューの絵に出てこない。手を握る、腕が体の後ろに回る、強い twist の、どのフレームも無い。まだ誰も目で見ていない。
-
-### 描画（手順 2、未着手）
-
-9. 口。tools/build_body_parts.py にはもう口を描く処理が無く、built/sprites/ は前回のまま（ImageDraw.ellipse で描いた黒い楕円）である。-face.png の mouthA から mouthO は黒い楕円か棒になっている。coat では元のスマイルの線が、開いた口の横に残る。mouth_e と mouth_u は無く、sprites.js の `MOUTH_SHAPES` も、え を mouth_a_half の横伸ばし、う を mouth_o の幅縮みで作ったままである。
-10. 閉じ目。-face.png の eyesClosed、eyesHalf、eyesSmile を見る。vest は肌のにじみで、線がほとんど見えない。coat と photo は、base の目の下にある茶色いにじみが透けて見え、lash レイヤーに描かれている眉が消える。
-
-### 髪（手順 3、未着手）
-
-11. 全身用の髪の衝突は無い。photo の hairmask.png はシャツ全体を覆っていて、rig.json の strands の backL と backR が腰（y=562）まで伸びている。そのためシャツの中央が髪と一緒に揺れる。
-
-### その他
-
-12. `npm run build`（tsc --noEmit）と `npm run build:runtime` が失敗する。型エラーは 6 件で、場所は packages/runtime/src/engine/index.ts の MeshAvatar 型、src/editor/SkeletonControls.tsx の Pose と SkeletonPose、tests/body-pose.test.ts と tests/skeleton-pose.test.ts の hands と translation である。この回より前の 0a6ae51 でも同じ 6 件が出る。
-13. packages/runtime/src/format/validate.ts は、parts.json の `cutout`（base、under、over が layers を指しているか）を検査していない。
-14. docs/pose-system-issues.md は、切り抜き化より前のスキニングだけの説明のままである。
-15. 実際のカメラ入力では確かめていない。
+1. photo の閉じ目・半目・笑顔（-face.png、目の 5 倍切り抜き）。線は 1 本だが、小さな目では太い棒に見え、その上下に肌と合わない淡い楕円が載る。眉は残る。
+2. coat の閉じ目。線と眉は残るが、まぶたの上に淡いぼかしの斑が乗る。半目は虹彩が見える側と、斑が残る側がある。
+3. photo の口。あ・え・お は元の唇が開くが、中が平らな暗い塗りで、口の脇に肌色のパッチが出る。い は元の唇に近い細い開きで、変化が小さい。
+4. photo の上げた袖の内側は、まだ段のついた縁である。yaw の肩とシャツに白い点がある。sit の股は暗いギザギザの形、knee はズボンを横切る直線の切れ目が見える。
+5. coat の sit の股は、明るい灰色の四角ではなくなったが、暗い幾何学的なパッチのままである。yaw の肩に白い点が 1 つある。
+6. vest の肘と膝に、陰影の段差として直線の切れ目が残る。yaw の肩に点が 1 つある。
+7. 拳は同じ手を指先側へ縮めた絵、裏は同じ切り抜きをぼかした絵である。別の絵ではない。vest の拳は、見ると開いた手に近い。
+8. 胸の画素を押す衝突は未実装のままである。髪の房の点が頭・肩・胸の楕円へ休止より深く入らない制約はある。揺らしの確認シートは出していない。制約は 90 フレームの単体テストで見ている。
+9. 実際のカメラ入力では確かめていない。
 
 ## 確認に使うスクリプトとコマンド
 

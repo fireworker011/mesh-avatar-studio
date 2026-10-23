@@ -17,7 +17,7 @@ const DEG = Math.PI / 180;
  * @typedef {{ name: string, parent: string | null, kind: string, side: string | null, pivot: number[], tip: number[], restVector: number[], offset: number[], length: number, radius: number, swing: Range, twist: Range }} SkeletonJoint
  * @typedef {{ order: string[], joints: Record<string, SkeletonJoint>, extraBones: Record<string, { pivot: number[], tip: number[], radius: number, maxBend: number, length: number }>, meshParents: Record<string, string | null>, limbNames: string[], headNames: string[], angleMap: Record<string, string> }} Skeleton
  * @typedef {{ swing: number, twist: number }} JointPose
- * @typedef {{ joints: Record<string, JointPose>, drawOrder: Record<string, number>, hands?: { L: number, R: number }, translation?: number[] }} Pose
+ * @typedef {{ joints: Record<string, JointPose>, drawOrder: Record<string, number>, hands?: { L: number, R: number }, translation?: [number, number] }} Pose
  */
 
 /** Degrees from the anatomical position. `hyperextension` is the small reverse past straight. */
@@ -284,6 +284,7 @@ function copyHands(hands) {
   return { L: Number(hands.L) || 0, R: Number(hands.R) || 0 };
 }
 
+/** @param {unknown} value @returns {[number, number] | undefined} */
 function copyTranslation(value) {
   if (!Array.isArray(value) || value.length < 2) return undefined;
   const x = Number(value[0]), y = Number(value[1]);
@@ -501,15 +502,16 @@ export function jointLimits(skeleton) {
   });
 }
 
-/** @param {Pose} pose @returns {{ format: 'mesh-avatar-pose', version: 1, joints: Record<string, JointPose>, drawOrder: Record<string, number> }} */
+/** @param {Pose} pose @returns {{ format: 'mesh-avatar-pose', version: 1, joints: Record<string, JointPose>, drawOrder: Record<string, number>, hands?: { L: number, R: number }, translation?: [number, number] }} */
 export function poseToJson(pose) {
   /** @type {Record<string, JointPose>} */
   const joints = {};
   for (const [name, value] of Object.entries(pose.joints)) {
     joints[name] = { swing: round(value.swing), twist: round(value.twist) };
   }
+  /** @type {{ format: 'mesh-avatar-pose', version: 1, joints: Record<string, JointPose>, drawOrder: Record<string, number>, hands?: { L: number, R: number }, translation?: [number, number] }} */
   const file = { format: 'mesh-avatar-pose', version: 1, joints, drawOrder: pose.drawOrder ?? {} };
-  if (pose.translation) file.translation = pose.translation.map(round);
+  if (pose.translation) file.translation = [round(pose.translation[0]), round(pose.translation[1])];
   if (pose.hands) file.hands = { L: round(pose.hands.L || 0), R: round(pose.hands.R || 0) };
   return file;
 }

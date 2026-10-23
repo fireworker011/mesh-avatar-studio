@@ -25,11 +25,11 @@ test('pose rows become OpenPose BODY_25 and a mirrored preview raises image-righ
   const calls: unknown[] = [];
   const avatar = {
     fullBody: true,
-    trackBody(input: unknown, options?: { facing?: string; format?: string }) {
+    trackBody(input: unknown, options?: { facing?: 'camera' | 'same'; format?: 'mediapipe'; smoothing?: number; dt?: number }) {
       calls.push(options);
-      return poseFromKeypoints(skeleton, input, options);
+      return poseFromKeypoints(skeleton, input as object, options);
     },
-    poseFromKeypoints(input: unknown, options?: { facing?: string }) { return poseFromKeypoints(skeleton, input, options); },
+    poseFromKeypoints(input: unknown, options?: { facing?: 'camera' | 'same' }) { return poseFromKeypoints(skeleton, input as object, options); },
     setSkeletonPose() { return null; },
   };
   const driver = new BodyDriver();

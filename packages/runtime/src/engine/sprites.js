@@ -16,13 +16,15 @@ export function createSpriteModule(engine, rig) {
   // Mouth shapes. mouthForm is the vowel axis: -1 wide (i) .. 0 (a) .. +1 round (u/o);
   // mouthOpen how far it opens. Each shape names the drawing it uses, the openness that
   // drawing shows at full size, and a width factor (u is a narrowed o).
+  // e and u use their own drawings when the sheet has them. A bust sheet does not,
+  // and then they stay the widened half-あ and the narrowed お the regression measures.
   const MOUTH_SHAPES = {
     a: { sprite: 'mouth_a', ref: 0.9, width: 1 },
     aHalf: { sprite: 'mouth_a_half', ref: 0.55, width: 1 },
     i: { sprite: 'mouth_i', ref: 0.55, width: 1 },
-    e: { sprite: 'mouth_a_half', ref: 0.65, width: 1.06 },
+    e: { sprite: 'mouth_e', ref: 0.9, width: 1, alt: 'mouth_a_half', altRef: 0.65, altWidth: 1.06 },
     o: { sprite: 'mouth_o', ref: 0.75, width: 1 },
-    u: { sprite: 'mouth_o', ref: 0.75, width: 0.78 },
+    u: { sprite: 'mouth_u', ref: 0.9, width: 1, alt: 'mouth_o', altRef: 0.75, altWidth: 0.78 },
   };
   // below this the drawn closed mouth of the original image is shown (a barely open mouth
   // drawing looked like a stuck, oddly shaped mouth)
@@ -170,7 +172,10 @@ export function createSpriteModule(engine, rig) {
         const shape = mouthShape(P.mouthOpen, P.mouthForm, lastShape);
         lastShape = shape;
         const def = shape && MOUTH_SHAPES[shape];
-        const mt = def && items[def.sprite];
+        let drawn = null;
+        if (def && items[def.sprite]) drawn = { item: items[def.sprite], ref: def.ref, width: def.width };
+        else if (def && def.alt && items[def.alt]) drawn = { item: items[def.alt], ref: def.altRef, width: def.altWidth };
+        const mt = drawn && drawn.item;
         // the expression's closed mouth stays solid under an open mouth drawing until it has faded in
         const closed = MOUTH_MOODS.includes(mood) && items[`mouth_${mood}`];
         if (closed && (!mt || P.mouthOpen < MOUTH_OPEN_MIN + 0.04)) {
@@ -183,8 +188,8 @@ export function createSpriteModule(engine, rig) {
           // fade in right above the threshold so the closed line hands over softly
           mt.layer.alpha = sstep(MOUTH_OPEN_MIN, MOUTH_OPEN_MIN + 0.04, P.mouthOpen);
           // never squash a drawing below half its height: flatter looked like a blob
-          const squash = Math.min(1.1, Math.max(0.5, P.mouthOpen / def.ref));
-          place(mt, P, phys, squash, def.width);
+          const squash = Math.min(1.1, Math.max(0.5, P.mouthOpen / drawn.ref));
+          place(mt, P, phys, squash, drawn.width);
         }
         return { eyes: covered, mouth: shape };
       },

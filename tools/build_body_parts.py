@@ -20,6 +20,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from paint_face import paint_faces
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Per-illustration decisions that the pixels alone do not settle:
@@ -92,19 +94,83 @@ def unit(v):
 
 
 def paint_from(rgba, known, fill, radius=5):
-    """Colour `fill` by continuing the pixels of `known` only (OpenCV Telea inpainting).
-    Everything outside `known` is treated as missing, so no other layer bleeds in."""
+    """Colour `fill` by copying pixels of `known` only.
+
+    Each missing pixel repeats a real texel a short way back into that cloth, so a
+    fold continues instead of blurring into one flat colour. Nothing outside
+    `known` is sampled. `radius` is unused; callers still pass it.
+    """
+    del radius
     if not fill.any():
         return np.zeros(fill.shape + (3,), np.uint8)
-    box = bounds(fill | known, pad=radius + 2)
+    box = bounds(fill | known, pad=2)
+    if box is None:
+        return np.zeros(fill.shape + (3,), np.uint8)
     x, y, w, h = box
-    crop = np.ascontiguousarray(rgba[y:y + h, x:x + w, :3])
-    k = known[y:y + h, x:x + w]
-    missing = (~k).astype(np.uint8) * 255
-    out = cv2.inpaint(crop, missing, radius, cv2.INPAINT_TELEA)
+    colour = continue_cloth(rgba[y:y + h, x:x + w], known[y:y + h, x:x + w], fill[y:y + h, x:x + w])
     full = np.zeros(fill.shape + (3,), np.uint8)
-    full[y:y + h, x:x + w] = out
+    full[y:y + h, x:x + w] = colour
     return full
+
+
+def continue_cloth(rgba, known, fill):
+    """Nearest known texel, then one step further in, repeated every few pixels."""
+    h, w = known.shape
+    out = np.zeros((h, w, 3), np.uint8)
+    if not known.any() or not fill.any():
+        return out
+    sx = np.full((h, w), -1, np.int32)
+    sy = np.full((h, w), -1, np.int32)
+    ys, xs = np.nonzero(known)
+    sx[ys, xs] = xs
+    sy[ys, xs] = ys
+    step = 1 << int(np.floor(np.log2(max(h, w))))
+    while step >= 1:
+        cy = np.arange(h, dtype=np.int32)[:, None]
+        cx = np.arange(w, dtype=np.int32)[None, :]
+        for dy in (-step, 0, step):
+            for dx in (-step, 0, step):
+                if dx == 0 and dy == 0:
+                    continue
+                rolled_x = np.roll(sx, (dy, dx), axis=(0, 1))
+                rolled_y = np.roll(sy, (dy, dx), axis=(0, 1))
+                valid = rolled_x >= 0
+                if dy > 0:
+                    valid[:dy, :] = False
+                elif dy < 0:
+                    valid[dy:, :] = False
+                if dx > 0:
+                    valid[:, :dx] = False
+                elif dx < 0:
+                    valid[:, dx:] = False
+                old_d = np.where(sx >= 0, ((cy - sy).astype(np.float64) ** 2) + ((cx - sx).astype(np.float64) ** 2), 1e12)
+                new_d = np.where(valid, ((cy - rolled_y).astype(np.float64) ** 2) + ((cx - rolled_x).astype(np.float64) ** 2), 1e12)
+                take = new_d < old_d
+                sx = np.where(take, rolled_x, sx)
+                sy = np.where(take, rolled_y, sy)
+        step //= 2
+    ys, xs = np.nonzero(fill)
+    nx, ny = sx[ys, xs], sy[ys, xs]
+    ok = nx >= 0
+    vx, vy = xs - nx, ys - ny
+    dist = np.hypot(vx, vy)
+    # A fixed step back into the cloth. Repeating that step on a period stamped
+    # the sleeve with arcs.
+    ux = np.divide(vx, np.maximum(dist, 1e-3))
+    uy = np.divide(vy, np.maximum(dist, 1e-3))
+    sample_x = np.clip(np.rint(nx - ux * 3.0), 0, w - 1).astype(np.int32)
+    sample_y = np.clip(np.rint(ny - uy * 3.0), 0, h - 1).astype(np.int32)
+    inside = known[sample_y, sample_x] & ok
+    sample_x = np.where(inside, sample_x, np.clip(nx, 0, w - 1))
+    sample_y = np.where(inside, sample_y, np.clip(ny, 0, h - 1))
+    picked = rgba[sample_y, sample_x, :3]
+    out[ys[ok], xs[ok]] = picked[ok]
+    if fill.any():
+        buffer = rgba[..., :3].copy()
+        buffer[fill] = out[fill]
+        soft = cv2.GaussianBlur(buffer, (0, 0), 1.15)
+        out[fill] = soft[fill]
+    return out
 
 
 def width_samples(alpha, bones, visible, hair):
@@ -255,6 +321,26 @@ def matte_leftovers(rgba):
     return (rgba[..., 3] == 255) & (luma(rgb) > 195) & (rgb.max(-1) - rgb.min(-1) < 14)
 
 
+def smooth_internal(regions, opaque):
+    """Straighten a cut that runs through the figure. Pixels on the silhouette,
+    against the background, stay on the part they were drawn on."""
+    silhouette = cv2.dilate((~opaque).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    labels = np.zeros(opaque.shape, np.int32)
+    names = list(CHAINS)
+    for index, name in enumerate(names, start=1):
+        labels[regions[name]] = index
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)).astype(np.float32)
+    kernel /= kernel.sum()
+    votes = [cv2.filter2D(((labels == 0) & opaque).astype(np.float32), -1, kernel)]
+    votes += [cv2.filter2D((labels == index).astype(np.float32), -1, kernel) for index in range(1, len(names) + 1)]
+    choice = np.argmax(np.stack(votes), axis=0).astype(np.int32)
+    labels = np.where(opaque & ~silhouette, choice, labels)
+    smoothed = {}
+    for index, name in enumerate(names, start=1):
+        smoothed[name] = (labels == index) & opaque
+    return smoothed
+
+
 def claim_outline(owner, other, rgba, steps=3):
     """Move the dark outline pixels that border `owner` from `other` into `owner`.
     Dark means darker than both cloths there, so a dark coat is not taken for its outline."""
@@ -366,6 +452,9 @@ def segment(rgba, rig, cfg, hair, debug=None):
         markers[core] = LABEL[chain]
     markers[(face | hair) & opaque] = LABEL['torso']
     markers[~opaque] = LABEL['bg']
+    # Light matte left in the gap beside a sleeve is not cloth. Seeded onto the
+    # limb, it travels with the sleeve and reads as a pale jagged rim.
+    markers[matte_leftovers(rgba)] = LABEL['torso']
     image = np.where(opaque[..., None], rgba[..., :3], 200).astype(np.uint8)
     labels = cv2.watershed(np.ascontiguousarray(image[..., ::-1]), markers.copy())
     # watershed ridge pixels: give them to the neighbouring label that is not background
@@ -410,16 +499,11 @@ def segment(rgba, rig, cfg, hair, debug=None):
             body, regions[chain] = claim_outline(body, regions[chain], rgba)
         else:
             regions[chain], body = claim_outline(regions[chain], body, rgba)
-    # Matte leftovers between a limb and the body go with the limb: once it moves away they
-    # sit against real background, where they do not show. Left in the base they would
-    # stay behind as a light sliver.
-    matte = matte_leftovers(rgba) & body
+    # The same matte, if the outline pass picked it up, stays off the limb.
+    matte = matte_leftovers(rgba)
     for chain in CHAINS:
-        near_limb = cv2.dilate(regions[chain].astype(np.uint8), np.ones((3, 3), np.uint8), iterations=6) > 0
-        take = matte & near_limb
-        regions[chain] |= take
-        body &= ~take
-        matte &= ~take
+        regions[chain] &= ~matte
+    regions = smooth_internal(regions, opaque)
     if debug is not None:
         colours = {'armL': (230, 60, 60), 'armR': (60, 120, 230), 'legL': (240, 170, 40), 'legR': (60, 190, 90)}
         view = rgba[..., :3].astype(np.float32).copy()
@@ -683,11 +767,17 @@ def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
             pb, cb = bones[parent], bones[child]
             n = unit(unit(np.subtract(pb['tip'], pb['pivot'])) + unit(np.subtract(cb['tip'], cb['pivot'])))
             s = (xs - cb['pivot'][0]) * n[0] + (ys - cb['pivot'][1]) * n[1]
-            fade = max(2.0, 0.15 * widths[child])
-            band = same & (s < 0) & (s > -fade)
+            fade = max(8.0, 0.42 * widths[child])
+            child_image, _child_mask = drawn[child]
             image, mask = drawn[parent]
-            factor = 0.3 + 0.7 * np.clip(-s / fade, 0, 1)
-            image[band, 3] = (image[band, 3] * factor[band]).astype(np.uint8)
+            # Only where the child already holds the parent's pixel: fading to nothing
+            # there still composites to the illustration, and a bent joint no longer
+            # shows the cut as a hard step in the shading.
+            same_colour = np.all(image[..., :3] == child_image[..., :3], axis=-1) & (child_image[..., 3] > 0)
+            band = same & same_colour & (s < 0) & (s > -fade)
+            t = np.clip(-s / fade, 0, 1)
+            smooth = t * t * (3 - 2 * t)
+            image[band, 3] = (image[band, 3].astype(np.float32) * smooth[band]).astype(np.uint8)
     for name, (image, mask) in drawn.items():
         layers[name] = crop_layer(image, mask)
     # Layers cut from the same base meet along seams. Once the body moves by a fraction of a
@@ -723,7 +813,7 @@ def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
         debug['extensions'] = extensions
         debug['caps'] = caps
         debug['hair_front'] = hair_front
-    return layers, delta, widths
+    return layers, delta, widths, hair
 
 
 def slice_of(toward, inner_arm, t_edge):
@@ -805,6 +895,22 @@ def main():
         build(sample, args.debug)
 
 
+def photo_hair_mask(rgba, found):
+    """Hair for the photo sample: the dark strands, without the shirt, trousers or face skin.
+
+    The built hair mask follows the long back strands down the placket and then
+    matches the blue cloth, so the shirt centre sways with the hair. Blue cloth
+    and skin-toned pixels are not hair; the strand springs then have nothing
+    there to move.
+    """
+    rgb = rgba[..., :3].astype(np.float32)
+    red, green, blue = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    tone = luma(rgb)
+    blue_cloth = (blue > red + 8) & (blue > green + 2)
+    skin = (tone > 105) & (red > blue + 12) & (red + 6 > green)
+    return found & ~blue_cloth & ~skin & (rgba[..., 3] > 8)
+
+
 def build(sample, debug_dir=None):
     folder = ROOT / 'samples' / sample
     cfg = SAMPLES[sample]
@@ -814,7 +920,7 @@ def build(sample, debug_dir=None):
         raise SystemExit(f'{sample}: base size does not match the rig')
     hairmask = np.array(Image.open(folder / 'built' / 'hairmask.png').convert('L')).astype(np.float32) / 255
     debug = {} if debug_dir else None
-    layers, delta, widths = build_parts(sample, folder, rig, cfg, original, hairmask, debug)
+    layers, delta, widths, hair = build_parts(sample, folder, rig, cfg, original, hairmask, debug)
     if delta > 1.01:
         raise SystemExit(f'{sample}: layers laid back at rest differ from the illustration by {delta:.1f}')
     part_dir = folder / 'built' / 'parts'
@@ -854,8 +960,16 @@ def build(sample, debug_dir=None):
         rects[name] = rect
     manifest = {'version': 1, 'build': 'parts-2', 'cutout': cutout, 'layers': rects, 'bindings': bindings}
     (part_dir / 'parts.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    notes = paint_faces(folder, original, rig, cfg['style'])
+    if sample == 'full-body-photo':
+        kept = photo_hair_mask(original, hair)
+        before = int((hairmask > 0.5).sum())
+        Image.fromarray(kept.astype(np.uint8) * 255, 'L').save(folder / 'built' / 'hairmask.png')
+        print(f'  photo hairmask {before} -> {int(kept.sum())} px (shirt and face skin dropped)')
     print(f'{sample}: {len(bindings)} limb parts, rest max delta {delta:.2f}, widths ' +
           ' '.join(f'{k}={v:.0f}' for k, v in widths.items()))
+    for note in notes:
+        print(f'  {note}')
     if debug is not None:
         write_debug(debug_dir, sample, original, debug)
 

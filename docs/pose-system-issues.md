@@ -10,6 +10,28 @@ Bust avatars omit `fullBody`. They never build a skeleton, and a full-body avata
 that never calls `setSkeletonPose` keeps the older limb sliders. Both paths are
 what the 0 px bust regression measures.
 
+## Cut-out limbs
+
+A full-body sample whose `parts/parts.json` has a `cutout` section does not skin
+the torso, coat or skirt to the limb bones. Those stay the painted picture.
+Each limb is one rigid piece about its drawn joints. The parent is drawn over
+the child's root, a shoulder cap and the front hair are drawn over the arms, and
+a body yaw slides the near arm, the torso and the far arm apart in depth. Twist
+does not squash a cut-out. A closed hand, or a limb turned away, swaps in another
+drawing of the same cut-out. Cloth that was hidden at rest — under a sleeve, a
+skirt, a coat or long hair — is continued from that part's own pixels.
+
+Bust avatars, and a full-body avatar without `cutout`, still use the single mesh
+described below.
+
+Hair on a full-body rig may sway, but a strand point is not allowed to sit
+deeper inside the head, shoulder or chest ellipses than the drawing placed it.
+That limit does not move chest or clothing pixels. Chest collision, pushing the
+painted chest, is not implemented. The photo sample's hair mask used to cover
+the shirt because the back strands ran down the placket; the mask now keeps the
+dark hair only, so the shirt does not sway with it. The strand polylines
+themselves are unchanged.
+
 ## Blockers, and the options for each
 
 ### Occluded and unpainted regions
@@ -24,9 +46,10 @@ Options:
 - Keep a second sprite (a turned arm, a fist) and swap it in when the angle passes a threshold.
 - Leave the hole. The runtime can only report it.
 
-What we do: `uncoveredRegions()` returns a polygon for each joint whose swing
-passes about 20°. Nothing is inpainted. The mesh does not invent skin, cloth, or
-a hand.
+What we do: a cut-out avatar continues the hidden cloth from the part's own
+pixels and can swap a back or fist drawing. `uncoveredRegions()` still returns a
+polygon for each joint whose swing passes about 20°. The single mesh, used when
+there is no `cutout` section, does not invent skin, cloth, or a hand.
 
 ### Self-overlap and draw order
 
@@ -57,10 +80,12 @@ Options:
 - A 2.5D depth offset, with a real side drawing.
 - Scale the limb perpendicular to the bone as a stand-in for twist.
 
-What we do: twist, where the joint allows it, scales the cross-section by
-`cos(twist)` about the posed bone. Elbows, knees, and fingers have twist clamped
-to 0, because a hinge does not spin the painting around the bone. The scale is
-not a rotation of the artwork. Past a small angle it looks like a squash.
+What we do: on the single mesh, twist scales the cross-section by `cos(twist)`
+about the posed bone. A cut-out limb does not squash; past the threshold it
+shows the back drawing instead. Elbows, knees, and fingers have twist clamped
+to 0, because a hinge does not spin the painting around the bone. The scale on
+the single mesh is not a rotation of the artwork. Past a small angle it looks
+like a squash.
 
 ### Cloth and skirt
 
@@ -74,11 +99,12 @@ Options:
 - A separate skirt layer with its own weights.
 - Leave the skirt on the thigh and hip weights.
 
-What we do: the skirt stays on the hip and thigh weights. There is no cloth
-solver. A deep knee bend will smear or tear the hem. Hair keeps the existing
-strand springs; in an anatomical pose those anchors use the skeleton weights, so
-a posed torso can move a strand that hangs on the body. Strands are still short
-springs, not a hair groom.
+What we do: without `cutout`, the skirt stays on the hip and thigh weights.
+There is no cloth solver. A deep knee bend will smear or tear the hem. With
+`cutout`, the coat and skirt stay in the base and the leg turns underneath
+them. Hair keeps the existing strand springs. On a full-body rig those points
+cannot sink further into the head, shoulders or chest than they were drawn.
+They do not push the chest. Strands are still short springs, not a hair groom.
 
 ### Hands and fingers
 
@@ -93,7 +119,8 @@ Options:
 
 What we do: optional finger hinges, parented to the wrist, flexion 90° and
 hyperextension 15°, twist 0. The vest sample does not author fingers, so its
-hands stay one bone. No fist sprite is invented.
+hands stay one bone. A cut-out hand can swap to a fist drawing made by pulling
+the same hand in toward the knuckles. That drawing is not a new hand.
 
 ### Hair
 

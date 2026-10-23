@@ -122,6 +122,23 @@ export function validateAvatarFiles(files: Record<string, FileData>): string[] {
         }
       }
     }
+    if (parts.cutout !== undefined) {
+      const path = 'built/parts/parts.json.cutout';
+      const named = (name: unknown, field: string) => {
+        if (typeof name !== 'string' || !object(parts.layers) || !own(parts.layers, name)) {
+          errors.push(`${field}: unknown part layer`);
+        }
+      };
+      if (!object(parts.cutout)) errors.push(`${path}: expected an object`);
+      else {
+        named(parts.cutout.base, `${path}.base`);
+        for (const key of ['under', 'over'] as const) {
+          const list = parts.cutout[key];
+          if (!Array.isArray(list)) errors.push(`${path}.${key}: expected a list`);
+          else list.forEach((name, index) => named(name, `${path}.${key}[${index}]`));
+        }
+      }
+    }
   }
   const sprites = json('built/sprites/sprites.json', false);
   if (sprites && version(sprites, 'built/sprites/sprites.json')) {

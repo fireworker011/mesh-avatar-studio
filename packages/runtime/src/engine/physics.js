@@ -1,5 +1,47 @@
 import { FULL_BODY_BONES } from '../rig/bones.js';
 
+/** Depth inside an ellipse, in pixels. 0 when the point is outside. */
+function ellipseDepth(px, py, shape) {
+  const rx = shape.rx || 1, ry = shape.ry || 1;
+  const r = Math.hypot((px - shape.cx) / rx, (py - shape.cy) / ry);
+  return r >= 1 ? 0 : (1 - r) * Math.min(rx, ry);
+}
+
+/**
+ * Keep a strand point from resting deeper inside the head, shoulder or chest
+ * ellipses than it was drawn. Does not move those shapes' pixels. A bust has
+ * no shapes passed in and is unchanged.
+ * @param {number[]} point
+ * @param {number[]} rest
+ * @param {{ cx: number, cy: number, rx: number, ry: number }[]} shapes
+ */
+export function limitStrandDepth(point, rest, shapes) {
+  let x = point[0], y = point[1];
+  for (const shape of shapes) {
+    if (!shape?.rx || !shape?.ry) continue;
+    const restDepth = ellipseDepth(rest[0], rest[1], shape);
+    let depth = ellipseDepth(x, y, shape);
+    if (depth <= restDepth + 1e-4) continue;
+    for (let n = 0; n < 12 && depth > restDepth; n++) {
+      let gx = (x - shape.cx) / (shape.rx * shape.rx);
+      let gy = (y - shape.cy) / (shape.ry * shape.ry);
+      let glen = Math.hypot(gx, gy);
+      if (glen < 1e-8) {
+        gx = rest[0] - shape.cx;
+        gy = rest[1] - shape.cy;
+        glen = Math.hypot(gx, gy) || 1;
+      }
+      const before = depth;
+      const step = Math.max(0.25, depth - restDepth);
+      x += gx / glen * step;
+      y += gy / glen * step;
+      depth = ellipseDepth(x, y, shape);
+      if (depth >= before - 1e-4) break;
+    }
+  }
+  return [x, y];
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createPhysics(engine, rig) {
@@ -41,6 +83,9 @@ export function createPhysics(engine, rig) {
   const softLimit = (v, m) => { const l = Math.hypot(v[0], v[1]); if (l < 1e-6) return v; const k = m * Math.tanh(l / m) / l; return [v[0] * k, v[1] * k]; };
 
   const HAIR = Object.fromEntries(Object.entries(rig.buns ?? {}).map(([key, area]) => [key, { at: [area.cx, area.cy], k: 260, c: 11, hang: 3, max: 4 }]));
+  // Full body only. Bust physics never consults these, so the regression path
+  // does not mix the limit in and then cancel it. Chest pixels are not pushed.
+  const BODY_SHAPES = FULL ? [rig.head, rig.body?.chest, ...(rig.body?.shoulders ?? [])].filter(shape => shape?.rx && shape?.ry) : null;
 
   const clampLen = (v, m) => { const l = Math.hypot(v[0], v[1]); if (l > m) { v[0] *= m / l; v[1] *= m / l; } };
 
@@ -114,7 +159,16 @@ export function createPhysics(engine, rig) {
         }
         for (let j = 0; j < 4; j++) {
           const o = [st.p[j][0] - target[j][0], st.p[j][1] - target[j][1]];
-          out[j] = softLimit(o, Math.max(0.5, cfg.max * HAIR_TUNE.reach * Math.max(1, g) * j / 3));
+          const limited = softLimit(o, Math.max(0.5, cfg.max * HAIR_TUNE.reach * Math.max(1, g) * j / 3));
+          if (BODY_SHAPES) {
+            const rest = cfg.nodes[j];
+            const held = limitStrandDepth([rest[0] + limited[0], rest[1] + limited[1]], rest, BODY_SHAPES);
+            limited[0] = held[0] - rest[0];
+            limited[1] = held[1] - rest[1];
+            st.p[j][0] = target[j][0] + limited[0];
+            st.p[j][1] = target[j][1] + limited[1];
+          }
+          out[j] = limited;
         }
       });
 
@@ -147,6 +201,22 @@ export function createPhysics(engine, rig) {
           const l = snap[Math.max(0, i - 1)], r = snap[Math.min(FRINGE - 1, i + 1)];
           for (const a of [0, 1]) O[i][j][a] = snap[i][a] * 0.5 + (l[a] + r[a]) * 0.25;
         }
+      }
+      // Neighbour smoothing can push a fringe strand back into the head. Clamp
+      // again after it. Bust has no shapes, so this does not run there.
+      if (BODY_SHAPES) {
+        STRANDS.forEach((cfg, si) => {
+          const out = O[si], st = this.strands[si];
+          for (let j = 0; j < 4; j++) {
+            const rest = cfg.nodes[j];
+            const held = limitStrandDepth([rest[0] + out[j][0], rest[1] + out[j][1]], rest, BODY_SHAPES);
+            const nx = held[0] - rest[0], ny = held[1] - rest[1];
+            st.p[j][0] += nx - out[j][0];
+            st.p[j][1] += ny - out[j][1];
+            out[j][0] = nx;
+            out[j][1] = ny;
+          }
+        });
       }
 
       // Tassels: a two-joint angular pendulum. The old verlet chain was pulled back to its
