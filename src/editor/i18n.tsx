@@ -10,7 +10,7 @@ export const GUIDE_KEY = 'mesh-avatar-guide-seen';
 
 const en = {
   ...workflowEn,
-  product: 'Mesh Avatar Studio', subtitle: 'Shape the motion in your illustration',
+  product: 'フルボディエディター', subtitle: 'Shape the motion in your illustration',
   tools: 'Project tools', openProject: 'Open project', openRig: 'Load rig.json only…', openFolder: 'Browse for a project folder…',
   rigFile: 'Open rig file', folderFiles: 'Open project folder files', save: 'Save rig', undo: 'Undo', redo: 'Redo',
   projectHelp: 'A project is the folder an agent created from your illustration: rig.json, source.png and built/.',
@@ -65,7 +65,7 @@ const en = {
 };
 const ja: typeof en = {
   ...workflowJa,
-  product: 'Mesh Avatar Studio', subtitle: 'イラストの動く範囲を調整',
+  product: 'フルボディエディター', subtitle: 'イラストの動く範囲を調整',
   tools: 'プロジェクト操作', openProject: 'プロジェクトを開く', openRig: 'rig.json だけ読み込む…', openFolder: 'プロジェクトフォルダを選ぶ…',
   rigFile: '設定ファイルを開く', folderFiles: 'プロジェクトフォルダのファイルを開く', save: '設定を保存', undo: '元に戻す', redo: 'やり直す',
   projectHelp: 'プロジェクトは、AI エージェントがイラストから作ったフォルダです(rig.json・source.png・built/ を含む)。',

@@ -2,7 +2,7 @@ import type { PartGroup } from './i18n';
 import type { workflowEn } from './workflow-i18n';
 
 export const uiZh = {
-  product: 'Mesh Avatar Studio', subtitle: '让插画动起来，调整角色的动作范围',
+  product: 'フルボディエディター', subtitle: '让插画动起来，调整角色的动作范围',
   tools: '项目操作', openProject: '打开项目', openRig: '仅加载 rig.json…', openFolder: '选择项目文件夹…',
   rigFile: '打开绑定配置文件', folderFiles: '打开项目文件夹内的文件', save: '保存绑定', undo: '撤销', redo: '重做',
   projectHelp: '项目是根据你的插画制作的文件夹，包含 rig.json（绑定配置）、source.png（原图）和 built/（生成图层）。',
