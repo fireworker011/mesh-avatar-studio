@@ -140,12 +140,14 @@ def brow_mask(lash, rect, eye):
     return mask
 
 
-def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink):
+def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink, style='anime'):
     """One lid line on the skin that is already drawn under the eye.
 
     The opening of the base picture is that skin. A single averaged colour there
     sat on the face as a pale disc, so the sprite copies the base pixels and only
-    adds the line. Half-open eyes keep the iris below the line.
+    adds the line. Half-open eyes keep the iris below the line. A photo eye is a
+    few pixels tall, so its line stays near one pixel; copying the open lash
+    column by column broke the line.
     """
     x0, x1 = float(eye['x0']), float(eye['x1'])
     top = np.asarray(eye['top'], np.float64)
@@ -184,6 +186,8 @@ def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink):
             inner = 1 - u if index == 0 else u
             taper = min(1.0, outer / 0.16) * min(1.0, inner / 0.06)
             half = min(thick / 2, height * 0.4) * taper
+            if style == 'photo':
+                half = min(half, 0.65)
             if half > 0.15:
                 line = min(max(line, lid_top + half), lid_bot - half)
             source = composite if mode == 'half' and py > line + max(half, 0.5) else base
@@ -192,12 +196,13 @@ def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink):
                 continue
             canvas[y, x, :3] = pixel[:3]
             canvas[y, x, 3] = 255
-            if half > 0.15 and abs(py - line) <= half:
-                # Soften the ink into the pixel already there, not into a new colour.
-                edge = abs(py - line) / half
-                cover = 1.0 if edge < 0.55 else max(0.0, (1 - edge) / 0.45)
-                skin_f = pixel[:3].astype(np.float32)
-                canvas[y, x, :3] = (ink_f * cover + skin_f * (1 - cover)).astype(np.uint8)
+            if half <= 0.15 or abs(py - line) > half:
+                continue
+            edge = abs(py - line) / half
+            solid = 0.45 if style == 'photo' else 0.55
+            cover = 1.0 if edge < solid else max(0.0, (1 - edge) / (1 - solid))
+            skin_f = pixel[:3].astype(np.float32)
+            canvas[y, x, :3] = (ink_f * cover + skin_f * (1 - cover)).astype(np.uint8)
     brow = brow_mask(lash, lash_rect, eye)
     oy, ox = ly - upper, lx - left
     if oy >= 0 and ox >= 0:
@@ -382,11 +387,14 @@ def paint_photo_mouth(image, mouth, kind):
     up = spec['up'] * height * 1.2
     down = spec['down'] * height * 1.15
     width = spec['width']
-    seam_y = np.array([(top_edge[x] + bot_edge[x]) // 2 for x in order], np.int32)
-    seam = image[np.clip(seam_y, 0, image.shape[0] - 1), np.array(order)]
-    tones = luma_of(seam[..., :3].astype(np.float32))
-    hole = np.median(seam[tones <= np.percentile(tones, 35)][..., :3].astype(np.float32), axis=0)
-    hole = np.clip(hole * 0.62, 0, 255)
+    # The cavity is the lip's own dark crease in that column. One darkened median
+    # read as a flat fill.
+    seam_color = {}
+    for x in order:
+        column = image[top_edge[x]:bot_edge[x] + 1, x, :3].astype(np.float32)
+        if not len(column):
+            continue
+        seam_color[x] = column[int(np.argmin(luma_of(column)))]
     # Skin is the pixel just outside the lip, per column, not one flat rectangle.
     skin_at = {}
     for x in order:
@@ -403,11 +411,9 @@ def paint_photo_mouth(image, mouth, kind):
     upper = max(0, int(min(top_edge.values()) - reach))
     lower = min(image.shape[0], int(max(bot_edge.values()) + reach + 1))
     canvas = np.zeros((lower - upper, right - left, 4), np.uint8)
-    cover = cv2.dilate(mask.astype(np.uint8), np.ones((5, 5), np.uint8), iterations=2) > 0
-    for x in order:
-        y0 = max(0, top_edge[x] - 2)
-        y1 = min(image.shape[0], bot_edge[x] + 7)
-        cover[y0:y1, x] = True
+    # One pixel past the lip covers its soft edge. A wide dilation painted a skin patch
+    # beside the mouth.
+    cover = cv2.dilate(mask.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=1) > 0
     xs_arr = np.array(order)
 
     def nearest_x(x):
@@ -444,7 +450,7 @@ def paint_photo_mouth(image, mouth, kind):
                 src_y = int(np.clip(src_bot - (new_bot - y) * (lower_span / max(lower_span + shift_down, 1)), mid, src_bot))
                 local[:3] = image[src_y, src_x, :3]
             else:
-                local[:3] = hole.astype(np.uint8)
+                local[:3] = seam_color.get(src_x, image[int(mid), src_x, :3]).astype(np.uint8)
     # Any of the original lip the new drawing missed is covered, or it shows beside the vowel.
     ys, xs = np.nonzero(cover)
     for y, x in zip(ys, xs):
@@ -466,7 +472,7 @@ def paint_faces(folder, base, rig, style):
         thick, ink = measure_lash(lash, rect, eye)
         notes.append(f'eye{index} lash {thick:.1f}px ink {ink.tolist()}')
         for mode, name in (('closed', f'eyes_closed_{index}'), ('half', f'eyes_half_{index}'), ('smile', f'eyes_smile_{index}')):
-            layers[name] = paint_eye(base, composite, lash, rect, eye, index, mode, thick, ink)
+            layers[name] = paint_eye(base, composite, lash, rect, eye, index, mode, thick, ink, style)
     painter = paint_photo_mouth if style == 'photo' else paint_drawn_mouth
     for kind, name in (
         ('a', 'mouth_a'), ('a_half', 'mouth_a_half'), ('i', 'mouth_i'),

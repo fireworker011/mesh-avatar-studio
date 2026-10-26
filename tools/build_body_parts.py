@@ -151,25 +151,29 @@ def continue_cloth(rgba, known, fill):
         step //= 2
     ys, xs = np.nonzero(fill)
     nx, ny = sx[ys, xs], sy[ys, xs]
-    ok = nx >= 0
-    vx, vy = xs - nx, ys - ny
+    ok = np.nonzero(nx >= 0)[0]
+    if not len(ok):
+        return out
+    vx = xs[ok].astype(np.float64) - nx[ok]
+    vy = ys[ok].astype(np.float64) - ny[ok]
     dist = np.hypot(vx, vy)
-    # A fixed step back into the cloth. Repeating that step on a period stamped
-    # the sleeve with arcs.
-    ux = np.divide(vx, np.maximum(dist, 1e-3))
-    uy = np.divide(vy, np.maximum(dist, 1e-3))
-    sample_x = np.clip(np.rint(nx - ux * 3.0), 0, w - 1).astype(np.int32)
-    sample_y = np.clip(np.rint(ny - uy * 3.0), 0, h - 1).astype(np.int32)
-    inside = known[sample_y, sample_x] & ok
-    sample_x = np.where(inside, sample_x, np.clip(nx, 0, w - 1))
-    sample_y = np.where(inside, sample_y, np.clip(ny, 0, h - 1))
-    picked = rgba[sample_y, sample_x, :3]
-    out[ys[ok], xs[ok]] = picked[ok]
-    if fill.any():
-        buffer = rgba[..., :3].copy()
-        buffer[fill] = out[fill]
-        soft = cv2.GaussianBlur(buffer, (0, 0), 1.15)
-        out[fill] = soft[fill]
+    ux = vx / np.maximum(dist, 1e-3)
+    uy = vy / np.maximum(dist, 1e-3)
+    # Walk outward from the cloth. Each new pixel repeats the texel two steps
+    # further in, so a fold continues. A blur here turned that continuation flat.
+    buf = rgba[..., :3].copy()
+    filled = known.copy()
+    for k in np.argsort(dist):
+        y = int(ys[ok[k]])
+        x = int(xs[ok[k]])
+        step = min(2.0, float(dist[k]))
+        sy_i = int(np.clip(round(y - uy[k] * step), 0, h - 1))
+        sx_i = int(np.clip(round(x - ux[k] * step), 0, w - 1))
+        if not (known[sy_i, sx_i] or filled[sy_i, sx_i]):
+            sy_i, sx_i = int(ny[ok[k]]), int(nx[ok[k]])
+        buf[y, x] = buf[sy_i, sx_i]
+        filled[y, x] = True
+    out[ys[ok], xs[ok]] = buf[ys[ok], xs[ok]]
     return out
 
 
@@ -539,15 +543,6 @@ def split_chain(region, names, bones, widths, xs, ys):
     return out
 
 
-def joint_radius(region, pivot, width):
-    inside = region.astype(np.uint8)
-    dist = cv2.distanceTransform(inside, cv2.DIST_L2, 5)
-    x, y = int(round(pivot[0])), int(round(pivot[1]))
-    y = min(max(y, 0), region.shape[0] - 1)
-    x = min(max(x, 0), region.shape[1] - 1)
-    return float(np.clip(dist[y, x], width * 0.6, width * 1.3))
-
-
 def compose(layers, order, shape):
     """Premultiplied alpha compositing of {name: (rgba, rect)} in order, onto transparent."""
     h, w = shape
@@ -649,6 +644,30 @@ def fist(image, rect, bone, length_scale=0.55, taper=0.22, knuckle=0.46):
     return out
 
 
+def hidden_along(xs, ys, bone, width, cover, region, t0, t1):
+    """Cloth the illustration hid, at the limb's width, touching the visible part.
+
+    Distance to the bone line, not to the segment, so the end is flat instead of
+    a semicircle. Growth from the visible part keeps the hidden cloth attached.
+    """
+    ax, ay = float(bone['pivot'][0]), float(bone['pivot'][1])
+    vx, vy = float(bone['tip'][0]) - ax, float(bone['tip'][1]) - ay
+    length = max(float(np.hypot(vx, vy)), 1e-6)
+    line_d = np.abs((xs - ax) * vy - (ys - ay) * vx) / length
+    _d, t = segment_field(xs, ys, bone['pivot'], bone['tip'])
+    along = (line_d < width * 0.92) & (t >= t0) & (t <= t1)
+    candidate = (along & cover) | region
+    grow = region.copy()
+    kernel = np.ones((3, 3), np.uint8)
+    for _ in range(64):
+        nxt = cv2.dilate(grow.astype(np.uint8), kernel, iterations=1) > 0
+        nxt &= candidate
+        if int(nxt.sum()) == int(grow.sum()):
+            break
+        grow = nxt
+    return grow & cover & ~region
+
+
 def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
     shape = original.shape[:2]
     xs, ys = grid(shape)
@@ -683,6 +702,13 @@ def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
         bone = bones[f'upperArm{side}']
         caps[side] = disc(xs, ys, bone['pivot'], shoulder[side] * 1.5 + 4 + yaw_slide) & torso_px & ~face
         torso_px &= ~caps[side]
+    # A couple of real torso pixels past the cap close the hairline that shows
+    # when a body yaw slides the arm.
+    for side in 'LR':
+        grown = cv2.dilate(caps[side].astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2) > 0
+        grown &= torso_px & ~face & ~limb_any
+        caps[side] |= grown
+        torso_px &= ~grown
     base_cut_mask = torso_px
     # Coat or shirt side behind a sleeve: per row, the torso edge is interpolated between
     # the shoulder and the rows where background shows between arm and torso.
@@ -713,20 +739,11 @@ def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
             region = parts[name]
             cover = rest_cover[name]
             ext = np.zeros(shape, bool)
-            if i == 0 and chain.startswith('arm'):
-                ext |= disc(xs, ys, bone['pivot'], shoulder[name[-1]] * 1.5) & (caps[name[-1]] | hair_front)
-                d, t = segment_field(xs, ys, bone['pivot'], bone['tip'])
-                ext |= (d < widths[name] * 1.05) & hair_front
-            elif i == 0:
-                d, t = segment_field(xs, ys, bone['pivot'], bone['tip'])
-                ext |= (d < widths[name] * 1.1) & (t <= 1)
-            else:
-                r = joint_radius(regions[chain], bone['pivot'], widths[name])
-                ext |= disc(xs, ys, bone['pivot'], r)
-                if chain.startswith('arm'):
-                    d, t = segment_field(xs, ys, bone['pivot'], bone['tip'])
-                    ext |= (d < widths[name] * 1.05) & hair_front
-            ext &= cover & ~region
+            # Flat-ended cloth along the bone, joined to the visible part. A disc
+            # around the pivot, or a stub that does not meet the cloth, showed as a
+            # separate patch once the joint turned.
+            t1 = 0.36 if i else 1.02
+            ext |= hidden_along(xs, ys, bone, widths[name], cover, region, 0.0, t1)
             # never under a soft edge of the cover: it would show through at rest
             extensions[name] = ext
     rgb = original[..., :3].astype(np.float32)
@@ -744,15 +761,11 @@ def build_parts(sample, folder, rig, cfg, original, hairmask, debug):
             inside = cv2.erode((region & solid & ~matte).astype(np.uint8), kernel, iterations=2) > 0
             colour = paint_from(original, inside if inside.sum() > 50 else region & solid & ~matte, ext, radius=5)
             if i > 0:
-                # Under a parent of the same cloth (sleeve on sleeve, skin on skin) the hidden
-                # root is that cloth as drawn: the parent's own pixels continue the surface.
-                pivot = bones[name]['pivot']
-                near_root = region & solid & disc(xs, ys, pivot, widths[name] * 2)
-                if near_root.sum() > 20:
-                    own = np.median(rgb[near_root], axis=0)
-                    same = ext & parts[names[i - 1]] & cloth_match(rgb, own)
-                    colour[same] = original[same, :3]
-                    same_root[name] = same
+                # The hidden root is the parent's own pixels, so the overlap can fade
+                # without a step and the rest stack stays the illustration.
+                same = ext & parts[names[i - 1]]
+                colour[same] = original[same, :3]
+                same_root[name] = same
             image[ext, :3] = colour[ext]
             image[ext, 3] = 255
             drawn[name] = (image, region | ext)
@@ -911,6 +924,21 @@ def photo_hair_mask(rgba, found):
     return found & ~blue_cloth & ~skin & (rgba[..., 3] > 8)
 
 
+def load_authored(folder, filename, shape):
+    """A drawn replacement for a generated part, when the illustration never showed that side.
+
+    `authored/<filename>` wins when it is the same size as the generated cut-out.
+    """
+    path = folder / 'authored' / filename
+    if not path.is_file():
+        return None
+    image = np.array(Image.open(path).convert('RGBA'))
+    if image.shape[:2] != shape:
+        print(f'  {filename}: authored size {image.shape[1]}x{image.shape[0]} does not match the cut-out')
+        return None
+    return image
+
+
 def build(sample, debug_dir=None):
     folder = ROOT / 'samples' / sample
     cfg = SAMPLES[sample]
@@ -939,11 +967,13 @@ def build(sample, debug_dir=None):
             kind = 'hand' if name.startswith('hand') else 'limb'
             binding = {'bone': name, 'side': side, 'kind': kind, 'front': f'{name}_front', 'back': f'{name}_back'}
             save_png(part_dir / f'{name}_front.png', image)
-            save_png(part_dir / f'{name}_back.png', soften(image))
+            back = load_authored(folder, f'{name}_back.png', image.shape[:2])
+            save_png(part_dir / f'{name}_back.png', back if back is not None else soften(image))
             rects[f'{name}_front'] = rect
             rects[f'{name}_back'] = rect
             if kind == 'hand':
-                save_png(part_dir / f'{name}_fist.png', fist(image, rect, bones[name]))
+                closed = load_authored(folder, f'{name}_fist.png', image.shape[:2])
+                save_png(part_dir / f'{name}_fist.png', closed if closed is not None else fist(image, rect, bones[name]))
                 rects[f'{name}_fist'] = rect
                 binding['fist'] = f'{name}_fist'
             bindings.append(binding)
