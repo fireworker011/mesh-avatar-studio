@@ -1,10 +1,11 @@
 """Closed eyes and vowel mouths for the full-body samples, from the illustration's own pixels.
 
 The closed line uses each eye's measured lash thickness and stays inside the opening.
-The brow strokes that live on the lash layer are copied across, so hiding that layer
-for the blink does not erase them. Mouths are the drawn lip stroke opened into each
-vowel, not an ellipse. A sheet without mouth_e / mouth_u is left for the runtime to
-fall back.
+The opening is filled with the skin already under that eye, so the sprite does not
+lay a new flat colour on the face. Brow strokes on the lash layer are copied across,
+because hiding that layer for the blink would erase them. Mouths are the drawn lip
+stroke opened into each vowel, not an ellipse. A sheet without mouth_e / mouth_u is
+left for the runtime to fall back.
 """
 import json
 from pathlib import Path
@@ -104,69 +105,18 @@ def measure_lash(lash, rect, eye):
     return thick, ink
 
 
-def lid_skin(base, eye, thick, cheek=None):
-    """Lid colour from beside the eye, or from the cheek when that sample is the shadow."""
-    top = np.asarray(eye['top'], np.float64)
-    bot = np.asarray(eye['bot'], np.float64)
-    span = max(float(eye['x1']) - float(eye['x0']), 1)
-    found = []
-    h, w = base.shape[:2]
-
-    def take(px, py):
-        px, py = int(round(px)), int(round(py))
-        if not (0 <= px < w and 0 <= py < h) or base[py, px, 3] < 200:
-            return
-        found.append(base[py, px, :3].astype(np.float32))
-
-    for i in range(4, 20):
-        u = i / 23
-        px = float(eye['x0']) + span * u
-        take(px, curve_at(top, u) - thick - 5)
-    mid = (curve_at(top, 0.5) + curve_at(bot, 0.5)) / 2
-    for sign, end in ((-1, float(eye['x0'])), (1, float(eye['x1']))):
-        for step in (4, 8, 12):
-            take(end + sign * step, mid)
-            take(end + sign * step, curve_at(top, 0 if sign < 0 else 1) - 2)
-    def from_patch(points):
-        picked = []
-        h, w = base.shape[:2]
-        for cx, cy in points:
-            for dy in range(-3, 4):
-                for dx in range(-3, 4):
-                    px, py = int(round(cx + dx)), int(round(cy + dy))
-                    if 0 <= px < w and 0 <= py < h and base[py, px, 3] > 200:
-                        picked.append(base[py, px, :3].astype(np.float32))
-        return picked
-
-    stack = np.stack(found) if found else None
-    tone = float(np.median(luma_of(stack))) if stack is not None else 0
-    # The cut-out fill under a photo lid is brown. Cheek skin is the colour around it.
-    if cheek is not None and (stack is None or tone < 190):
-        picked = from_patch([cheek])
-        if picked:
-            stack = np.stack(picked)
-    if stack is None:
-        return np.array([214, 186, 170], np.float32)
-    tones = luma_of(stack)
-    keep = stack[(tones >= np.percentile(tones, 45)) & (tones <= 245)]
-    if not len(keep):
-        keep = stack
-    return np.median(keep, axis=0)
-
-
-def brow_mask(lash, rect, eye, thick):
+def brow_mask(lash, rect, eye):
     """Brow strokes on the lash layer: a separate run above the lash, with a gap between.
 
-    The lash itself stays out of the sprite. Copying it as well as the new line
+    The lash itself stays out of this mask. Copying it as well as the closed line
     drew two lids.
     """
-    del thick
     x0, y0, w, h = rect
     top = np.asarray(eye['top'], np.float64)
     span = max(float(eye['x1']) - float(eye['x0']), 1)
     mask = np.zeros((h, w), bool)
     tones = luma_of(lash[..., :3].astype(np.float32))
-    opaque = (lash[..., 3] > 40) & (tones < 70)
+    opaque = (lash[..., 3] > 40) & (tones < 80)
     for x in range(w):
         u = (x0 + x - float(eye['x0'])) / span
         lid = curve_at(top, float(np.clip(u, 0, 1))) - y0
@@ -179,7 +129,6 @@ def brow_mask(lash, rect, eye, thick):
         for i, group in enumerate(groups):
             if i == lash_i or int(group[-1]) >= lash_top:
                 continue
-            # above the whole eye, so an outer-corner flick is not kept as a brow
             if float(group.mean()) > float(np.min(top)) - y0 - 1:
                 continue
             mask[group, x] = True
@@ -191,7 +140,13 @@ def brow_mask(lash, rect, eye, thick):
     return mask
 
 
-def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink, skin):
+def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink):
+    """One lid line on the skin that is already drawn under the eye.
+
+    The opening of the base picture is that skin. A single averaged colour there
+    sat on the face as a pale disc, so the sprite copies the base pixels and only
+    adds the line. Half-open eyes keep the iris below the line.
+    """
     x0, x1 = float(eye['x0']), float(eye['x1'])
     top = np.asarray(eye['top'], np.float64)
     bot = np.asarray(eye['bot'], np.float64)
@@ -203,9 +158,7 @@ def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink, sk
     lower = min(base.shape[0], max(int(np.ceil(max(top.max(), bot.max()))) + pad, ly + lh))
     canvas = np.zeros((lower - upper, right - left, 4), np.uint8)
     span = max(x1 - x0, 1)
-    skin_u8 = np.clip(skin, 0, 255).astype(np.uint8)
     ink_f = ink.astype(np.float32)
-    skin_f = skin_u8.astype(np.float32)
     for y in range(canvas.shape[0]):
         py = upper + y
         for x in range(canvas.shape[1]):
@@ -223,24 +176,29 @@ def paint_eye(base, composite, lash, lash_rect, eye, index, mode, thick, ink, sk
                 line = lid_top + height * (0.52 + 0.05 * hump)
             elif mode == 'smile':
                 line = lid_top + height * (0.70 - 0.34 * hump)
-            else:
+            elif mode == 'closed':
                 line = lid_top + height * (0.42 + 0.12 * hump)
+            else:
+                raise ValueError(f'unknown eye sprite {mode}')
             outer = u if index == 0 else 1 - u
             inner = 1 - u if index == 0 else u
             taper = min(1.0, outer / 0.16) * min(1.0, inner / 0.06)
             half = min(thick / 2, height * 0.4) * taper
             if half > 0.15:
                 line = min(max(line, lid_top + half), lid_bot - half)
-            if mode == 'half' and py > line + max(half, 0.5):
-                canvas[y, x] = composite[py, px]
+            source = composite if mode == 'half' and py > line + max(half, 0.5) else base
+            pixel = source[py, px]
+            if pixel[3] < 200:
                 continue
-            canvas[y, x, :3] = skin_u8
+            canvas[y, x, :3] = pixel[:3]
             canvas[y, x, 3] = 255
             if half > 0.15 and abs(py - line) <= half:
+                # Soften the ink into the pixel already there, not into a new colour.
                 edge = abs(py - line) / half
-                cover = 1.0 if edge < 0.62 else max(0.0, (1 - edge) / 0.38)
+                cover = 1.0 if edge < 0.55 else max(0.0, (1 - edge) / 0.45)
+                skin_f = pixel[:3].astype(np.float32)
                 canvas[y, x, :3] = (ink_f * cover + skin_f * (1 - cover)).astype(np.uint8)
-    brow = brow_mask(lash, lash_rect, eye, thick)
+    brow = brow_mask(lash, lash_rect, eye)
     oy, ox = ly - upper, lx - left
     if oy >= 0 and ox >= 0:
         view = canvas[oy:oy + lh, ox:ox + lw]
@@ -506,14 +464,9 @@ def paint_faces(folder, base, rig, style):
     for index, eye in enumerate(rig['eyes']):
         lash, rect = load_part(folder, f'eye{index}_lash')
         thick, ink = measure_lash(lash, rect, eye)
-        cheek = None
-        cheeks = rig.get('cheeks') or []
-        if len(cheeks) == 2:
-            cheek = cheeks[0] if index == 0 else cheeks[1]
-        skin = lid_skin(base, eye, thick, cheek)
-        notes.append(f'eye{index} lash {thick:.1f}px ink {ink.tolist()} skin {np.clip(skin, 0, 255).astype(int).tolist()}')
+        notes.append(f'eye{index} lash {thick:.1f}px ink {ink.tolist()}')
         for mode, name in (('closed', f'eyes_closed_{index}'), ('half', f'eyes_half_{index}'), ('smile', f'eyes_smile_{index}')):
-            layers[name] = paint_eye(base, composite, lash, rect, eye, index, mode, thick, ink, skin)
+            layers[name] = paint_eye(base, composite, lash, rect, eye, index, mode, thick, ink)
     painter = paint_photo_mouth if style == 'photo' else paint_drawn_mouth
     for kind, name in (
         ('a', 'mouth_a'), ('a_half', 'mouth_a_half'), ('i', 'mouth_i'),
