@@ -69,6 +69,8 @@ export function faceDensity(rig) {
  * @param {import('../rig/types').Rig} rig */
 export function createRenderer(engine, rig) {
   const { IMG, EYES, MOUTH, CHEEKS } = engine;
+  // the eyelid mask stops short of the brow; without a brow it keeps to just above the opening
+  const browY = rig.face?.brow?.cy ?? 1e4;
   const faceScale = faceDensity(rig).scale;
   // WebGL2 renderer: textured grid meshes whose vertices are deformed on the CPU,
   // plus a fragment-shader pass for eyelids, eye balls, mouth and blush on the base layer.
@@ -87,7 +89,7 @@ export function createRenderer(engine, rig) {
   uniform vec4 uRect;        // layer rect in source px
   uniform int uFace;
   uniform float uAlpha;
-  uniform vec4 uEyeBox[2];   // x0, x1, -, -
+  uniform vec4 uEyeBox[2];   // x0, x1, brow centre y (face.brow.cy), -
   uniform float uEyeTop[48]; // 2 eyes x EYE_N samples
   uniform float uEyeBot[48];
   uniform vec4 uEyeState[2]; // open, smile, ballX(px), ballY(px)
@@ -232,8 +234,9 @@ export function createRenderer(engine, rig) {
   }
 
   // The lash cut-out also holds the brow. Fading the whole layer would erase it, and
-  // sliding the mesh would smear it. Hide only the ink the coming-down lid covers, with
-  // the same few-pixel edge as the painted lid.
+  // sliding the mesh would smear it. Hide only the open-eye ink the coming-down lid
+  // covers: the whole upper lash above the opening and, once the eye is shut, the lower
+  // lash under it. The edges fade like the painted lid.
   vec4 maskEyePart(int e, vec2 p, vec4 c) {
     if (uFaceScale > 0.9) return c;
     float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
@@ -241,20 +244,23 @@ export function createRenderer(engine, rig) {
     vec4 box = uEyeBox[e];
     float span = box.y - box.x;
     if (span < 2.0) return c;
+    // sizes come from the middle of the eye: near the corners the opening is a point
+    float Hm = max(crv(e, false, 0.5) - crv(e, true, 0.5), 1.0);
+    float F = lidFeather(Hm);
     float u = (p.x - box.x) / span;
     float uf = 2.0 / span;
     if (u < -0.04 - uf || u > 1.04 + uf) return c;
     float uu = clamp(u, 0.0, 1.0);
     float top = crv(e, true, uu), bot = crv(e, false, uu);
-    float H = max(bot - top, 1.0);
-    float F = lidFeather(H);
     vec2 lids = eyeLids(e, uu, top, bot);
-    float edgeW = mix(0.6, F, smoothstep(0.8, 1.0, close));
-    // The open-eye ink, including the upper lash just above the opening. The brow
-    // sits further up and is left as drawn.
-    float above = top - max(3.0, H * 0.22);
+    float shut = smoothstep(0.8, 1.0, close);
+    float edgeW = mix(0.6, F, shut);
+    // A thick upper lash reaches well above the opening. The brow sits further up and is
+    // left as drawn: the hidden band stops halfway to the brow centre line (box.z).
+    float above = max(top - max(3.0, Hm * 0.75), min(top - 3.0, mix(box.z, top, 0.5)));
+    float below = mix(lids.x, max(lids.x, bot + max(2.0, Hm * 0.45)), shut);
     float side = smoothstep(-0.02 - uf, 0.03, u) * (1.0 - smoothstep(0.97, 1.02 + uf, u));
-    float inside = smoothstep(above - F, above + 0.8, p.y) * (1.0 - smoothstep(lids.x - edgeW, lids.x + edgeW, p.y));
+    float inside = smoothstep(above - F, above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
     return c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
   }
 
@@ -623,7 +629,7 @@ export function createRenderer(engine, rig) {
       }
       gl.uniform2fv(m.u.uScale, this.scale); gl.uniform2fv(m.u.uOffset, this.offset);
       gl.uniform1i(m.u.uTex, 0);
-      gl.uniform4fv(m.u.uEyeBox, EYES.flatMap(e => [e.x0, e.x1, 0, 0]));
+      gl.uniform4fv(m.u.uEyeBox, EYES.flatMap(e => [e.x0, e.x1, browY, 0]));
       gl.uniform1fv(m.u.uEyeTop, EYES.flatMap(e => e.top));
       gl.uniform1fv(m.u.uEyeBot, EYES.flatMap(e => e.bot));
       gl.uniform4fv(m.u.uEyeState, state.eyes);
