@@ -151,8 +151,17 @@ def fill_skin(img, hole):
         return img.copy()
     rgb = img[..., :3].astype(np.float32)
     colour, tolerance = skin_samples(img, hole)
+    # Skin in shadow (an upper lid under the brow) keeps the warm hue but is darker than
+    # the sampled colour; lit skin is brighter. Count both as skin, so the fill continues
+    # the shading next to the hole; grey highlights, eye whites and dark strokes are not
+    # warm or are too dark, and do not pull the fill grey.
+    lum = luminance(rgb)
+    warm = (rgb[..., 0] - rgb[..., 2]) >= 0.5 * max(colour[0] - colour[2], 1.0)
+    shaded = warm & (lum >= 0.7 * luminance(colour))
     skin = (
-        (hole == 0) & (np.abs(rgb - colour).max(-1) < tolerance) & (img[..., 3] > 200)
+        (hole == 0)
+        & ((np.abs(rgb - colour).max(-1) < tolerance) | shaded)
+        & (img[..., 3] > 200)
     )
     est = rgb.copy()
     known = skin.astype(np.float32)
@@ -162,18 +171,28 @@ def fill_skin(img, hole):
         fill = (known == 0) & (den[..., 0] > 0.02)
         est[fill] = (num / np.maximum(den, 1e-4))[fill]
         known = np.maximum(known, fill.astype(np.float32) * 0.5)
-    solve = (hole > 0) | ((cv2.dilate(hole, np.ones((17, 17), np.uint8)) > 0) & ~skin)
+    # Everything that is not skin near the hole is solved too, and non-skin outside that
+    # band is left out of the average, so only skin sets the fill colour; pixels outside
+    # the hole are solved but never written back.
+    solve = (hole > 0) | ((cv2.dilate(hole, np.ones((121, 121), np.uint8)) > 0) & ~skin)
     ys, xs = np.where(solve)
     y0, y1 = max(ys.min() - 2, 0), min(ys.max() + 3, img.shape[0])
     x0, x1 = max(xs.min() - 2, 0), min(xs.max() + 3, img.shape[1])
     cur = np.where(solve[..., None], est, rgb)[y0:y1, x0:x1].copy()
     m = solve[y0:y1, x0:x1]
     fixed = cur.copy()
-    for _ in range(600):
-        cur = np.where(m[..., None], cv2.blur(cur, (3, 3)), fixed)
+    w = (m | skin[y0:y1, x0:x1]).astype(np.float32)
+    wsum = np.maximum(cv2.blur(w, (3, 3)), 1e-6)[..., None]
+    # enough passes for the solve to settle across an eye-sized hole, so the fill meets
+    # the skin around it without a step
+    for _ in range(6000):
+        cur = np.where(m[..., None], cv2.blur(cur * w[..., None], (3, 3)) / wsum, fixed)
     out = rgb.copy()
     out[y0:y1, x0:x1] = cur
+    # soften only inside the hole: pixels outside it stay as drawn, so no outline appears
+    # where the layers above do not cover
     k = cv2.GaussianBlur((hole > 0).astype(np.float32), (0, 0), 1.0)[..., None]
+    k = k * (hole > 0)[..., None]
     res = img.copy()
     res[..., :3] = np.clip(rgb * (1 - k) + out * k, 0, 255).astype(np.uint8)
     # A cut-out cannot create opacity outside the original illustration.
