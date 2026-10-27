@@ -272,7 +272,20 @@ export function createRenderer(engine, rig) {
     float below = mix(lids.x, max(lids.x, bot + max(2.0, Hm * 0.45)), shut);
     float side = smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u));
     float inside = smoothstep(max(above - F - soft, mix(box.z, top, 0.5) - F), above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
-    return c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
+    vec4 hidden = c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
+    // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
+    // band just above the opening is shown again, moved down by how far the lid has come.
+    // It fades out as the eye shuts, where the painted lid takes over.
+    float drop = lids.x - top;
+    float lashH = max(3.0, Hm * 0.45);
+    // the lash ink ends a little above the opening's top line; the extra drop lets it
+    // meet the lid edge instead of floating above it
+    float ys = p.y - drop - 0.25 * lashH;
+    float band = smoothstep(top - lashH - 1.0, top - lashH, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
+    float ride = band * side * smoothstep(0.5, 1.5, drop) * (1.0 - shut);
+    if (ride <= 0.001) return hidden;
+    vec4 lash = texAt(vec2(p.x, ys)) * ride;
+    return lash + hidden * (1.0 - lash.a);
   }
 
   void main() {
