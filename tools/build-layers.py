@@ -145,8 +145,12 @@ def skin_samples(img, hole):
     return colour, max(22, min(60, spread * 3))
 
 
-def fill_skin(img, hole):
-    """Continue locally estimated shading into a hole by a membrane solve."""
+def fill_skin(img, hole, lean_edge=True):
+    """Continue locally estimated shading into a hole by a membrane solve.
+
+    lean_edge=False skips the lean toward the drawn edge pixels, for callers that only
+    use the fill as a skin estimate.
+    """
     if not np.any(hole):
         return img.copy()
     rgb = img[..., :3].astype(np.float32)
@@ -189,14 +193,15 @@ def fill_skin(img, hole):
         cur = np.where(m[..., None], cv2.blur(cur * w[..., None], (3, 3)) / wsum, fixed)
     # Within a few pixels of the hole's edge, lean toward a fill that meets the pixels
     # actually drawn there (hair tips included), so the skin fill has no visible rim.
-    inner = hole[y0:y1, x0:x1] > 0
-    drawn = rgb[y0:y1, x0:x1]
-    edge = np.where(inner[..., None], cur, drawn)
-    for _ in range(400):
-        edge = np.where(inner[..., None], cv2.blur(edge, (3, 3)), drawn)
-    depth = cv2.distanceTransform(inner.astype(np.uint8), cv2.DIST_L2, 3)
-    lean = np.exp(-np.maximum(depth - 1.0, 0.0) / 3.0)[..., None]
-    cur = np.where(inner[..., None], edge * lean + cur * (1.0 - lean), cur)
+    if lean_edge:
+        inner = hole[y0:y1, x0:x1] > 0
+        drawn = rgb[y0:y1, x0:x1]
+        edge = np.where(inner[..., None], cur, drawn)
+        for _ in range(400):
+            edge = np.where(inner[..., None], cv2.blur(edge, (3, 3)), drawn)
+        depth = cv2.distanceTransform(inner.astype(np.uint8), cv2.DIST_L2, 3)
+        lean = np.exp(-np.maximum(depth - 1.0, 0.0) / 3.0)[..., None]
+        cur = np.where(inner[..., None], edge * lean + cur * (1.0 - lean), cur)
     out = rgb.copy()
     out[y0:y1, x0:x1] = cur
     # soften only inside the hole: pixels outside it stay as drawn, so no outline appears
@@ -219,7 +224,8 @@ def eye_classes(rgba, eye):
     region = polygon_mask((h, w), eye["roi"])
     core = polygon_mask((h, w), eye["opening"])
     opaque = rgba[..., 3] > 0
-    est = fill_skin(rgba, region)[..., :3].astype(np.float32)
+    # a skin estimate only: leaning toward drawn edge pixels would pull ink in as "skin"
+    est = fill_skin(rgba, region, lean_edge=False)[..., :3].astype(np.float32)
     skin = np.abs(rgb - est).max(-1) < 22
     ink = (region > 0) & ~skin & (core == 0) & opaque
     core_pixels = rgb[(core > 0) & opaque]
