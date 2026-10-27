@@ -261,7 +261,7 @@ export function createRenderer(engine, rig) {
     // the brow
     float soft = clamp(Hm * 0.3, 2.0, 5.0);
     float us = soft / span;
-    if (u < -0.04 - uf - us || u > 1.04 + uf + us) return c;
+    if (u < -0.04 - uf - 3.0 * us || u > 1.04 + uf + 3.0 * us) return c;
     float uu = clamp(u, 0.0, 1.0);
     float top = crv(e, true, uu), bot = crv(e, false, uu);
     vec2 lids = eyeLids(e, uu, top, bot);
@@ -273,7 +273,12 @@ export function createRenderer(engine, rig) {
     float below = mix(lids.x, max(lids.x, bot + max(2.0, Hm * 0.45)), shut);
     float side = smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u));
     float inside = smoothstep(max(above - F - soft, mix(box.z, top, 0.5) - F), above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
-    vec4 hidden = c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
+    // shut, the lash's flick past the outer corner goes too (the half-shut eye keeps it);
+    // eye 0 is the left one in the picture, so its outer corner is at u = 0
+    float sideW = e == 0
+      ? smoothstep(-0.02 - uf - 3.0 * us, 0.03 - us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u))
+      : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
+    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close));
     // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
