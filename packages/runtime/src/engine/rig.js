@@ -211,13 +211,13 @@ export function createRig(rig, options = {}) {
     };
     if (FULL) {
       const mask = (1 - weights.head) ** 2;
-      const collect = (names, maskFor) => {
+      const collect = (names, maskFor, extraFor = () => 0) => {
         const hits = [];
         let sum = 0;
         for (const name of names) {
           const limb = boneOf(name);
           if (!limb) continue;
-          const weight = boneWeight(x, y, limb) * maskFor(name);
+          const weight = boneWeight(x, y, limb) * maskFor(name) + extraFor(name);
           if (weight < 0.03) continue;
           hits.push([name, weight]);
           sum += weight;
@@ -225,7 +225,9 @@ export function createRig(rig, options = {}) {
         const scale = sum > 1 ? 1 / sum : 1;
         return hits.map(([name, weight]) => [name, weight * scale]);
       };
-      weights.limbs = collect(FULL_BODY_BONES.map(bone => bone.name), () => mask);
+      // The head rides the torso: what the mask takes from the limbs goes to the torso
+      // bone, so a torso bend carries the head and neck instead of shearing the neck.
+      weights.limbs = collect(FULL_BODY_BONES.map(bone => bone.name), () => mask, name => name === 'torso' ? 1 - mask : 0);
       if (SKELETON) {
         const headNames = new Set(SKELETON.headNames);
         weights.skeletonLimbs = collect(SKELETON.limbNames, name => headNames.has(name) ? 1 : mask);
