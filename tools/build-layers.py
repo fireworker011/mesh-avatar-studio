@@ -187,6 +187,16 @@ def fill_skin(img, hole):
     # the skin around it without a step
     for _ in range(6000):
         cur = np.where(m[..., None], cv2.blur(cur * w[..., None], (3, 3)) / wsum, fixed)
+    # Within a few pixels of the hole's edge, lean toward a fill that meets the pixels
+    # actually drawn there (hair tips included), so the skin fill has no visible rim.
+    inner = hole[y0:y1, x0:x1] > 0
+    drawn = rgb[y0:y1, x0:x1]
+    edge = np.where(inner[..., None], cur, drawn)
+    for _ in range(400):
+        edge = np.where(inner[..., None], cv2.blur(edge, (3, 3)), drawn)
+    depth = cv2.distanceTransform(inner.astype(np.uint8), cv2.DIST_L2, 3)
+    lean = np.exp(-np.maximum(depth - 1.0, 0.0) / 3.0)[..., None]
+    cur = np.where(inner[..., None], edge * lean + cur * (1.0 - lean), cur)
     out = rgb.copy()
     out[y0:y1, x0:x1] = cur
     # soften only inside the hole: pixels outside it stay as drawn, so no outline appears
