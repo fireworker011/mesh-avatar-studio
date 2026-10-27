@@ -387,7 +387,8 @@ export function createRenderer(engine, rig) {
     // A thick upper lash reaches well above the opening. The brow sits further up and is
     // left as drawn: the hidden band stops halfway to the brow centre line (box.z).
     float above = max(top - max(3.0, Hm * 0.75), min(top - 3.0, mix(box.z, top, 0.5)));
-    float below = mix(lids.x, max(lids.x, bot + max(2.0, Hm * 0.45)), shut);
+    // shut, the band reaches past the lower lash's tail, which would else show as a faint arc
+    float below = mix(lids.x, max(lids.x, bot + max(3.0, Hm * 0.65)), shut);
     float side = smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u));
     float inside = smoothstep(max(above - F - soft, mix(box.z, top, 0.5) - F), above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
     // shut, the lash's flick past the outer corner goes too (the half-shut eye keeps it);
