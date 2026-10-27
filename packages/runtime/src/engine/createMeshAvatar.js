@@ -252,10 +252,10 @@ export async function createMeshAvatarImpl(canvas, options) {
       const smile = ep.eye === 0 ? P.eyeSmile : (P.eyeSmileL ?? P.eyeSmile);
       const meshOpen = paintBlink ? 1 : open;
       const meshSmile = paintBlink ? 0 : smile;
-      // The iris is the open eye. Lash and lower-lash ink inside the opening is masked
-      // in the shader; ink outside it, including the brow, stays where it was drawn.
-      const fade = paintBlink && ep.part === 'ball' ? Math.min(1, Math.max(0, open)) : 1;
-      ep.layer.alpha = eyePartAlpha(ep.part, meshOpen, meshSmile) * fade;
+      // The iris is the open eye; the shader hides it above the lid line, so it stays
+      // solid below it. Lash and lower-lash ink under the lid is masked in the shader;
+      // ink outside it, including the brow, stays where it was drawn.
+      ep.layer.alpha = eyePartAlpha(ep.part, meshOpen, meshSmile);
       const r = ep.mesh.rest, o = ep.mesh.pos;
       for (let k = 0; k < ep.W.length; k++) {
         const x = r[k * 2], y = r[k * 2 + 1];

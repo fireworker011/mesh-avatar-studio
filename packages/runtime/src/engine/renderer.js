@@ -177,9 +177,14 @@ export function createRenderer(engine, rig) {
   }
 
   // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
-  // brow and temple pixels from that cut-out across the eye. Cover the opening with skin
-  // taken from just under it, and draw one lash arc that dips in the middle. Nothing
-  // outside the traced opening is touched. A bust (uFaceScale 1) returns the base unchanged.
+  // brow and temple pixels from that cut-out across the eye. The upper lid comes down to
+  // the same line that hides the ball (eyeLids), so above that line the opening is skin and
+  // below it the eye still shows. The skin runs, per column, from the colour just above
+  // the opening to the colour just below it, and the edges fade over a few pixels. One
+  // lash arc rides the lid edge and settles on a line that dips in the middle when closed.
+  // A bust (uFaceScale 1) returns the base unchanged.
+  float lidFeather(float H) { return clamp(H * 0.2, 1.5, 3.0); }
+
   vec4 paintClosedEye(int e, vec2 p, vec4 base) {
     if (uFaceScale > 0.9) return base;
     float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
@@ -188,36 +193,47 @@ export function createRenderer(engine, rig) {
     float span = box.y - box.x;
     if (span < 2.0) return base;
     float u = (p.x - box.x) / span;
-    if (u < 0.0 || u > 1.0) return base;
-    float top = crv(e, true, u), bot = crv(e, false, u);
+    float uf = 2.0 / span;
+    if (u < -uf || u > 1.0 + uf) return base;
+    float uu = clamp(u, 0.0, 1.0);
+    float top = crv(e, true, uu), bot = crv(e, false, uu);
     float H = max(bot - top, 1.0);
-    // One-pixel feather at the opening edge, so the lid stays inside the drawn eye.
-    float side = smoothstep(0.0, 1.2 / span, u) * (1.0 - smoothstep(1.0 - 1.2 / span, 1.0, u));
-    float vert = smoothstep(top - 0.4, top + 0.6, p.y) * (1.0 - smoothstep(bot - 0.2, bot + 0.8, p.y));
-    float cover = side * vert * close;
-    if (cover <= 0.001) return base;
-    float sampleY = bot + max(3.0, H * 0.85);
-    vec2 sampleAt = vec2(clamp(p.x, box.x + span * 0.3, box.y - span * 0.3), sampleY);
-    vec3 skin = texAt(sampleAt).rgb;
-    float skinL = dot(skin, vec3(0.2126, 0.7152, 0.0722));
-    if (skinL < 0.22) skin = texAt(sampleAt + vec2(0.0, H)).rgb;
-    vec4 c = base;
-    c.rgb = mix(c.rgb, skin, cover);
+    float F = lidFeather(H);
+    vec2 lids = eyeLids(e, uu, top, bot);
+    // the lower edge is the lid line while it is inside the opening, and the lower lid,
+    // feathered like the rest, once the eye is shut
+    float shut = smoothstep(0.8, 1.0, close);
+    float edgeW = mix(0.6, F, shut);
+    float side = smoothstep(-uf, uf, u) * (1.0 - smoothstep(1.0 - uf, 1.0 + uf, u));
+    float vert = smoothstep(top - F, top + 0.5, p.y) * (1.0 - smoothstep(lids.x - edgeW, lids.x + edgeW, p.y));
+    float cover = side * vert * smoothstep(0.0, 0.15, close);
     float smile = clamp(uEyeState[e].y, 0.0, 1.0);
     float hump = 4.0 * u * (1.0 - u);
-    // A single thin curve: corners in the upper half, the middle dipping a little.
-    // A smile lifts that dip. Kept thin so it reads as a drawn lash, not a squashed iris.
-    float lid = mix(top, bot, 0.46) + H * (0.08 - 0.28 * smile) * hump;
+    float rest = mix(top, bot, 0.46) + H * (0.08 - 0.28 * smile) * hump;
+    float lid = mix(lids.x, rest, shut);
     float thick = max(1.25, H * 0.05);
     float taper = smoothstep(0.0, 0.12, u) * (1.0 - smoothstep(0.88, 1.0, u));
-    float lash = exp(-((p.y - lid) * (p.y - lid)) / (thick * thick)) * close * side * taper;
+    float lash = exp(-((p.y - lid) * (p.y - lid)) / (thick * thick)) * smoothstep(0.0, 0.3, close) * side * taper;
+    if (cover <= 0.001 && lash <= 0.001) return base;
+    float off = max(2.0, H * 0.2);
+    float x = clamp(p.x, box.x, box.y);
+    vec3 above = texAt(vec2(x, top - off)).rgb;
+    vec3 below = texAt(vec2(x, bot + off)).rgb;
+    vec3 lum = vec3(0.2126, 0.7152, 0.0722);
+    if (dot(below, lum) < 0.22) below = texAt(vec2(x, bot + off + H)).rgb;
+    if (dot(above, lum) < 0.22) above = below;
+    if (dot(below, lum) < 0.22) below = above;
+    vec3 skin = mix(above, below, smoothstep(top, bot, p.y));
+    vec4 c = base;
+    c.rgb = mix(c.rgb, skin, cover);
     vec3 ink = vec3(0.08, 0.045, 0.035) * max(c.a, cover);
     c.rgb = mix(c.rgb, ink, clamp(lash, 0.0, 0.98));
     return c;
   }
 
   // The lash cut-out also holds the brow. Fading the whole layer would erase it, and
-  // sliding the mesh would smear it. Hide only the ink inside the opening.
+  // sliding the mesh would smear it. Hide only the ink the coming-down lid covers, with
+  // the same few-pixel edge as the painted lid.
   vec4 maskEyePart(int e, vec2 p, vec4 c) {
     if (uFaceScale > 0.9) return c;
     float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
@@ -226,16 +242,20 @@ export function createRenderer(engine, rig) {
     float span = box.y - box.x;
     if (span < 2.0) return c;
     float u = (p.x - box.x) / span;
-    if (u < -0.04 || u > 1.04) return c;
+    float uf = 2.0 / span;
+    if (u < -0.04 - uf || u > 1.04 + uf) return c;
     float uu = clamp(u, 0.0, 1.0);
     float top = crv(e, true, uu), bot = crv(e, false, uu);
     float H = max(bot - top, 1.0);
+    float F = lidFeather(H);
+    vec2 lids = eyeLids(e, uu, top, bot);
+    float edgeW = mix(0.6, F, smoothstep(0.8, 1.0, close));
     // The open-eye ink, including the upper lash just above the opening. The brow
     // sits further up and is left as drawn.
     float above = top - max(3.0, H * 0.22);
-    float side = smoothstep(-0.02, 0.03, u) * (1.0 - smoothstep(0.97, 1.02, u));
-    float inside = smoothstep(above - 0.4, above + 0.8, p.y) * (1.0 - smoothstep(bot + 0.2, bot + 1.8, p.y));
-    return c * (1.0 - inside * side * close);
+    float side = smoothstep(-0.02 - uf, 0.03, u) * (1.0 - smoothstep(0.97, 1.02 + uf, u));
+    float inside = smoothstep(above - F, above + 0.8, p.y) * (1.0 - smoothstep(lids.x - edgeW, lids.x + edgeW, p.y));
+    return c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
   }
 
   void main() {
