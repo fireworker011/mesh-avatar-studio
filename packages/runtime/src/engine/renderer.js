@@ -401,7 +401,10 @@ export function createRenderer(engine, rig) {
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
     float drop = lids.x - top;
-    float lashH = max(2.0, Hm * 0.22);
+    // both eyes draw the same lash thickness, from the smaller opening: sized per eye, the
+    // taller eye's lash came out darker
+    float Ho = max(crv(1 - e, false, 0.5) - crv(1 - e, true, 0.5), 1.0);
+    float lashH = max(2.0, min(Hm, Ho) * 0.22);
     // the ink's bottom (the opening's top line) lands on the lid edge, over the ball's cut
     float ys = p.y - drop - 0.5;
     // solid where it meets the lid, thinning out upward like the open eye's lash
