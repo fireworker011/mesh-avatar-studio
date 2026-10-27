@@ -165,7 +165,12 @@ export async function createMeshAvatarImpl(canvas, options) {
   EYES.forEach((e, i) => {
     for (const part of EYE_PARTS) {
       const n = `eye${i}_${part}`;
-      const mesh = buildGrid(rects[n], part === 'ball' ? density.ballCell : density.eyeCell, alphaOf(imgs[n]), imgs[n].width);
+      // a painted blink slides the upper lash down inside its own rect, below the drawn
+      // ink, so that layer needs the whole quad (the 1x1 opaque stand-in)
+      const whole = part === 'lash' && density.scale < 0.9;
+      const mesh = whole
+        ? buildGrid(rects[n], density.eyeCell, new Uint8Array([255]), 1)
+        : buildGrid(rects[n], part === 'ball' ? density.ballCell : density.eyeCell, alphaOf(imgs[n]), imgs[n].width);
       const W = [];
       for (let k = 0; k < mesh.rest.length / 2; k++) W.push(baseWeights(mesh.rest[k * 2], mesh.rest[k * 2 + 1], 0));
       const layer = R.addLayer(n, imgs[n], mesh, { eyeBall: part === 'ball' ? i : undefined });

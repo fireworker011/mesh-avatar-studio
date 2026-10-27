@@ -246,7 +246,8 @@ export function createRenderer(engine, rig) {
   vec4 maskEyePart(int e, vec2 p, vec4 c) {
     if (uFaceScale > 0.9) return c;
     float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
-    if (close < 0.01 || c.a < 0.01) return c;
+    // a clear pixel can still receive the upper lash sliding down below, so it goes on
+    if (close < 0.01) return c;
     vec4 box = uEyeBox[e];
     float span = box.y - box.x;
     if (span < 2.0) return c;
@@ -277,10 +278,9 @@ export function createRenderer(engine, rig) {
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
     float drop = lids.x - top;
-    float lashH = max(3.0, Hm * 0.45);
-    // the lash ink ends a little above the opening's top line; the extra drop lets it
-    // meet the lid edge instead of floating above it
-    float ys = p.y - drop - 0.25 * lashH;
+    float lashH = max(2.5, Hm * 0.3);
+    // the ink's bottom (the opening's top line) lands on the lid edge, over the ball's cut
+    float ys = p.y - drop - 0.5;
     float band = smoothstep(top - lashH - 1.0, top - lashH, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
     float ride = band * side * smoothstep(0.5, 1.5, drop) * (1.0 - shut);
     if (ride <= 0.001) return hidden;
