@@ -228,6 +228,13 @@ export function createRig(rig, options = {}) {
       // The head rides the torso: what the mask takes from the limbs goes to the torso
       // bone, so a torso bend carries the head and neck instead of shearing the neck.
       weights.limbs = collect(FULL_BODY_BONES.map(bone => bone.name), () => mask, name => name === 'torso' ? 1 - mask : 0);
+      // Near the head (turn band) whatever no bone reaches, such as hair tips far from the
+      // torso axis, rides the torso too instead of staying behind and kinking.
+      const left = (1 - weights.limbs.reduce((sum, [, weight]) => sum + weight, 0)) * weights.turn;
+      if (left >= 0.03 && boneOf('torso')) {
+        const torso = weights.limbs.find(([name]) => name === 'torso');
+        if (torso) torso[1] += left; else weights.limbs.push(['torso', left]);
+      }
       if (SKELETON) {
         const headNames = new Set(SKELETON.headNames);
         weights.skeletonLimbs = collect(SKELETON.limbNames, name => headNames.has(name) ? 1 : mask);
