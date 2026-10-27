@@ -65,6 +65,22 @@ export function faceDensity(rig) {
   };
 }
 
+// How far a procedural mouth may extend, in source px from the mouth centre.
+// Down stops inside the jaw ellipse. Up stops short of the nose.
+function mouthFit(rig) {
+  const mouth = rig.mouth;
+  if (!mouth) return [8, 4];
+  const jaw = rig.face?.jaw;
+  const nose = rig.face?.nose;
+  const jawBottom = jaw
+    ? Math.min(jaw.cy + jaw.ry, Array.isArray(jaw.band) ? jaw.band[1] : jaw.cy + jaw.ry)
+    : mouth.cy + mouth.halfLen * 2;
+  const down = Math.max(mouth.halfLen * 0.5, jawBottom - mouth.cy - 0.5);
+  const noseBottom = nose ? nose.cy + nose.ry * 0.5 : mouth.cy - mouth.halfLen;
+  const up = Math.max(mouth.halfLen * 0.25, mouth.cy - noseBottom - 0.3);
+  return [down, up];
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createRenderer(engine, rig) {
@@ -72,6 +88,7 @@ export function createRenderer(engine, rig) {
   // the eyelid mask stops short of the brow; without a brow it keeps to just above the opening
   const browY = rig.face?.brow?.cy ?? 1e4;
   const faceScale = faceDensity(rig).scale;
+  const [mouthDown, mouthUp] = mouthFit(rig);
   // WebGL2 renderer: textured grid meshes whose vertices are deformed on the CPU,
   // plus a fragment-shader pass for eyelids, eye balls, mouth and blush on the base layer.
 
@@ -98,6 +115,7 @@ export function createRenderer(engine, rig) {
   uniform vec4 uCheeks;      // x0, y0, x1, y1
   uniform float uCheek;
   uniform float uFaceScale; // 1 on a bust; smaller when a full-body eye is a small part of the picture
+  uniform vec2 uMouthFit;   // max t below the mouth centre, max -t above it, source px
 
   const int EYE_N = 24;
   float crv(int e, bool top, float u) {
@@ -149,6 +167,98 @@ export function createRenderer(engine, rig) {
     return c * smoothstep(lids.x - 1.0, lids.x + 0.5, p.y) * (1.0 - smoothstep(lids.y - 0.9, lids.y + 0.6, p.y));
   }
 
+  vec3 mouthLip(vec2 d, vec2 n) {
+    vec3 best = vec3(0.46, 0.12, 0.14);
+    float bestS = 0.18;
+    for (int i = -4; i <= 4; i++) {
+      vec3 c = texAt(uMouth.xy + n * float(i) * 0.55 + d * float(i) * 0.35).rgb;
+      float mx = max(c.r, max(c.g, c.b));
+      float mn = min(c.r, min(c.g, c.b));
+      float score = (mx - mn) + c.r * 0.35 - c.b * 0.15;
+      if (score > bestS) { bestS = score; best = c; }
+    }
+    return best;
+  }
+
+  vec3 mouthSkin(vec2 d, vec2 n) {
+    vec3 best = vec3(0.87, 0.72, 0.66);
+    float bestS = 0.0;
+    vec2 q0 = uMouth.xy - d * uMouth.w * 1.85;
+    vec2 q1 = uMouth.xy + d * uMouth.w * 1.85;
+    vec2 q2 = uMouth.xy - d * uMouth.w * 1.35 - n * uMouth.w * 0.55;
+    vec2 q3 = uMouth.xy + d * uMouth.w * 1.35 - n * uMouth.w * 0.55;
+    for (int i = 0; i < 4; i++) {
+      vec2 q = i == 0 ? q0 : i == 1 ? q1 : i == 2 ? q2 : q3;
+      vec3 c = texAt(q).rgb;
+      float luma = dot(c, vec3(0.22, 0.68, 0.10));
+      float mx = max(c.r, max(c.g, c.b));
+      float mn = min(c.r, min(c.g, c.b));
+      float score = luma - (mx - mn) * 1.1;
+      if (luma > 0.30 && luma < 0.96 && score > bestS) { bestS = score; best = c; }
+    }
+    return best;
+  }
+
+  // A full-body face keeps the bust aperture in mouth-length units, not in bust
+  // pixels. Scaling 20px by a 6px eye collapses the hole inside its own feather.
+  // Lip and skin colours come from the picture. The edge is about one screen pixel,
+  // so a zoomed face redraws the mouth sharply instead of enlarging source texels.
+  vec4 mouthVector(vec4 base, vec2 d, vec2 n, float open, float s, float t, float form, float aa) {
+    float unit = max(uMouth.w, 1.0);
+    float down = max(uMouthFit.x, unit * 0.45);
+    float upFit = max(uMouthFit.y, unit * 0.2);
+    float wf = mix(0.96, form < 0.0 ? 1.08 : 0.58, abs(form));
+    float k = 1.0 - (s / wf) * (s / wf);
+    float line = uMouthState.z * (1.0 - clamp(s * s, 0.0, 1.0));
+    float hk = k > 0.0 ? pow(k, mix(0.55, form < 0.0 ? 0.38 : 0.92, abs(form))) : 0.0;
+    float rad = length(vec2(s / 1.30, (t - line * 0.25) / (unit * 0.95)));
+    if (rad > 1.35 && abs(s) > wf + 0.25) return base;
+
+    float openAmt = clamp(open, 0.0, 1.0);
+    float tall = mix(1.12, form < 0.0 ? 0.62 : 1.30, abs(form));
+    float gapH = min(unit * tall, down * 0.74);
+    float lipUpT = min(unit * 0.28, upFit * 0.5);
+    float lipLoT = min(unit * 0.36, down * 0.22);
+    float rise = min(unit * (0.04 + openAmt * 0.24 * hk), upFit * 0.7);
+    float up = line - rise;
+    float lo = min(line + openAmt * gapH * hk, down - lipLoT * 0.35);
+    float pinch = mix(0.22, 1.0, hk);
+    float loLip = min(lo + lipLoT * pinch, down);
+    float upLip = max(up - lipUpT * pinch, -upFit);
+
+    vec3 skin = mouthSkin(d, n);
+    vec3 lip = mouthLip(d, n);
+    float erase = (1.0 - smoothstep(0.72, 1.12, rad)) * smoothstep(0.04, 0.20, openAmt);
+    vec4 c = base;
+    c.rgb = mix(c.rgb, skin, clamp(erase, 0.0, 1.0));
+
+    float side = 1.0 - smoothstep(wf * 0.88, wf * 1.06, abs(s));
+    float lower = smoothstep(lo - aa, lo + aa, t) * (1.0 - smoothstep(loLip - aa, loLip + aa, t)) * side;
+    float upper = smoothstep(upLip - aa, upLip + aa, t) * (1.0 - smoothstep(up - aa, up + aa, t)) * side;
+    float loMid = clamp((t - lo) / max(loLip - lo, aa), 0.0, 1.0);
+    float upMid = clamp((up - t) / max(up - upLip, aa), 0.0, 1.0);
+    vec3 loCol = mix(lip * vec3(0.55, 0.38, 0.40), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
+    float gloss = exp(-((loMid - 0.62) * (loMid - 0.62)) * 8.0) * side;
+    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.35);
+    vec3 upCol = mix(lip * vec3(0.48, 0.32, 0.34), lip, smoothstep(0.15, 0.85, upMid));
+    c.rgb = mix(c.rgb, loCol, clamp(lower, 0.0, 1.0));
+    c.rgb = mix(c.rgb, upCol, clamp(upper, 0.0, 1.0));
+
+    float gap = 0.0;
+    if (k > 0.0) gap = smoothstep(up - aa, up + aa, t) * (1.0 - smoothstep(lo - aa, lo + aa, t)) * smoothstep(0.0, 0.08, k);
+    float tv = clamp((t - up) / max(lo - up, aa), 0.0, 1.0);
+    vec3 inside = mix(vec3(0.05, 0.012, 0.018), lip * vec3(0.22, 0.08, 0.09), 0.65);
+    inside = mix(inside, inside * vec3(1.25, 1.05, 1.0), tv);
+    float tongue = smoothstep(0.50, 0.78, tv) * (1.0 - smoothstep(0.30, 0.78, abs(s) / max(wf, 0.2))) * smoothstep(0.4, 0.7, openAmt);
+    inside = mix(inside, mix(lip, vec3(0.86, 0.40, 0.42), 0.62), tongue);
+    float teeth = (1.0 - smoothstep(0.06, 0.20, tv)) * smoothstep(0.32, 0.55, openAmt) * (1.0 - smoothstep(0.42, 0.80, abs(s) / max(wf, 0.2)));
+    inside = mix(inside, vec3(0.97, 0.95, 0.92), teeth);
+    float rimIn = smoothstep(0.0, 0.16, tv) * (1.0 - smoothstep(0.05, 0.22, tv)) + smoothstep(0.72, 0.90, tv) * (1.0 - smoothstep(0.90, 1.0, tv));
+    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.85);
+    c.rgb = mix(c.rgb, inside, clamp(gap, 0.0, 1.0));
+    return c;
+  }
+
   vec4 mouth(vec2 p, vec4 base) {
     float open = uMouthState.x;
     if (open < 0.01) return base;
@@ -156,26 +266,33 @@ export function createRenderer(engine, rig) {
     vec2 r = p - uMouth.xy;
     float s = dot(r, d) / uMouth.w, t = dot(r, n);
     float form = uMouthState.y;                       // -1 wide "i" .. +1 round "o"
-    float wf = mix(0.78, 0.46, clamp(form * 0.5 + 0.5, 0.0, 1.0));
-    float k = 1.0 - (s / wf) * (s / wf);
-    if (k <= 0.0) return base;
-    float line = uMouthState.z * (1.0 - s * s);
-    float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
-    float px = max(uFaceScale, 0.05);
-    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0)) * px;
-    float up = line - (0.6 + open * 2.5 * hk) * px;
-    float lo = line + open * H * hk;
-    float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
-    if (cov <= 0.0) return base;
-    float tv = clamp((t - up) / max(lo - up, 1.0), 0.0, 1.0);
-    vec3 col = mix(vec3(0.24, 0.05, 0.08), vec3(0.48, 0.15, 0.19), tv);
-    float tongue = smoothstep(0.5, 0.78, tv) * (1.0 - smoothstep(0.45, 0.8, abs(s) / wf));
-    col = mix(col, vec3(0.86, 0.44, 0.47), tongue * 0.9);
-    float teeth = (1.0 - smoothstep(0.12, 0.22, tv)) * smoothstep(0.25, 0.45, open) * (1.0 - smoothstep(0.55, 0.85, abs(s) / wf));
-    col = mix(col, vec3(0.99, 0.96, 0.94), teeth);
-    float rim = 1.0 - smoothstep(0.6, 1.8, lo - t);
-    col = mix(col, vec3(0.36, 0.09, 0.11), rim * 0.85);
-    return vec4(mix(base.rgb, col, cov), 1.0);
+    // One screen pixel, in source px. Computed before any per-pixel return so the
+    // derivative stays valid across the face mesh.
+    float aa = clamp(max(fwidth(t), abs(fwidth(s)) * uMouth.w) * 1.15, 0.02, max(uMouth.w * 0.18, 0.04));
+    if (uFaceScale > 0.9) {
+      float wf = mix(0.78, 0.46, clamp(form * 0.5 + 0.5, 0.0, 1.0));
+      float k = 1.0 - (s / wf) * (s / wf);
+      if (k <= 0.0) return base;
+      float line = uMouthState.z * (1.0 - s * s);
+      float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
+      float px = max(uFaceScale, 0.05);
+      float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0)) * px;
+      float up = line - (0.6 + open * 2.5 * hk) * px;
+      float lo = line + open * H * hk;
+      float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
+      if (cov <= 0.0) return base;
+      float tv = clamp((t - up) / max(lo - up, 1.0), 0.0, 1.0);
+      vec3 col = mix(vec3(0.24, 0.05, 0.08), vec3(0.48, 0.15, 0.19), tv);
+      float tongue = smoothstep(0.5, 0.78, tv) * (1.0 - smoothstep(0.45, 0.8, abs(s) / wf));
+      col = mix(col, vec3(0.86, 0.44, 0.47), tongue * 0.9);
+      float teeth = (1.0 - smoothstep(0.12, 0.22, tv)) * smoothstep(0.25, 0.45, open) * (1.0 - smoothstep(0.55, 0.85, abs(s) / wf));
+      col = mix(col, vec3(0.99, 0.96, 0.94), teeth);
+      float rim = 1.0 - smoothstep(0.6, 1.8, lo - t);
+      col = mix(col, vec3(0.36, 0.09, 0.11), rim * 0.85);
+      return vec4(mix(base.rgb, col, cov), 1.0);
+    }
+    if (abs(s) > 1.7 || t < -uMouthFit.y - 2.0 || t > uMouthFit.x + 2.0) return base;
+    return mouthVector(base, d, n, open, s, t, form, aa);
   }
 
   // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
@@ -668,6 +785,7 @@ export function createRenderer(engine, rig) {
       gl.uniform4f(m.u.uCheeks, CHEEKS[0][0], CHEEKS[0][1], CHEEKS[1][0], CHEEKS[1][1]);
       gl.uniform1f(m.u.uCheek, state.cheek);
       gl.uniform1f(m.u.uFaceScale, faceScale);
+      gl.uniform2f(m.u.uMouthFit, mouthDown, mouthUp);
       gl.activeTexture(gl.TEXTURE0);
 
       for (const L of this.layers) {
