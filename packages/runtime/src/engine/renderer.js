@@ -137,7 +137,17 @@ export function createRenderer(engine, rig) {
     float H = crv(e, false, 0.5) - crv(e, true, 0.5);
     float arc = mix(uEyeTop[e * EYE_N], uEyeTop[e * EYE_N + EYE_N - 1], u) - 0.3 * H * hump;
     float closed = max(top, bot + 1.0 + (arc - bot - 1.0) * smile);
-    return vec2((closed - top) * max(b, -0.07), b > 0.0 ? (closed - bot) * b * smile : 0.0);
+    // closing, the lid slides down as a whole and keeps the arch of the opening's top line
+    // (blending top into bottom flattened it into a stiff straight cut); near the corners
+    // it meets the lower line sooner and rests there
+    // it starts slowly, so a half-open slider still shows the top of the iris under the lid
+    float slide = (H + 1.0) * pow(b, 1.6), rest = closed - top;
+    // a soft meeting, so the lash does not hook down where the lid reaches the corner;
+    // it turns hard as the eye shuts, so the closed line is where it was
+    float km = 3.0 * (1.0 - clamp(b, 0.0, 1.0)) + 1e-4;
+    float hm = clamp(0.5 + 0.5 * (rest - slide) / km, 0.0, 1.0);
+    float dn = b > 0.0 ? max(0.0, mix(rest, slide, hm) - km * hm * (1.0 - hm)) : rest * max(b, -0.07);
+    return vec2(dn, b > 0.0 ? (closed - bot) * b * smile : 0.0);
   }
 
   vec2 eyeLids(int e, float u, float top, float bot) {
@@ -216,7 +226,8 @@ export function createRenderer(engine, rig) {
     if (rad > 1.35 && abs(s) > wf + 0.25) return base;
 
     float openAmt = clamp(open, 0.0, 1.0);
-    float tall = mix(1.12, form < 0.0 ? 0.62 : 1.30, abs(form));
+    // the opening stays near the drawn lips' size: a full gap of a mouth length looked pasted on
+    float tall = mix(0.8, form < 0.0 ? 0.5 : 0.95, abs(form));
     float gapH = min(unit * tall, down * 0.74);
     float lipUpT = min(unit * 0.28, upFit * 0.5);
     float lipLoT = min(unit * 0.36, down * 0.22);
@@ -229,7 +240,7 @@ export function createRenderer(engine, rig) {
 
     vec3 skin = mouthSkin(d, n);
     vec3 lip = mouthLip(d, n);
-    float erase = (1.0 - smoothstep(0.72, 1.12, rad)) * smoothstep(0.04, 0.20, openAmt);
+    float erase = (1.0 - smoothstep(0.6, 1.0, rad)) * smoothstep(0.04, 0.20, openAmt);
     vec4 c = base;
     c.rgb = mix(c.rgb, skin, clamp(erase, 0.0, 1.0));
 
@@ -240,7 +251,7 @@ export function createRenderer(engine, rig) {
     float upMid = clamp((up - t) / max(up - upLip, aa), 0.0, 1.0);
     vec3 loCol = mix(lip * vec3(0.75, 0.6, 0.62), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
     float gloss = exp(-((loMid - 0.62) * (loMid - 0.62)) * 8.0) * side;
-    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.12);
+    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.05);
     vec3 upCol = mix(lip * vec3(0.7, 0.55, 0.57), lip, smoothstep(0.15, 0.85, upMid));
     c.rgb = mix(c.rgb, loCol, clamp(lower, 0.0, 1.0));
     c.rgb = mix(c.rgb, upCol, clamp(upper, 0.0, 1.0));
@@ -256,7 +267,7 @@ export function createRenderer(engine, rig) {
     float teeth = (1.0 - smoothstep(0.06, 0.20, tv)) * smoothstep(0.32, 0.55, openAmt) * (1.0 - smoothstep(0.42, 0.80, abs(s) / max(wf, 0.2)));
     inside = mix(inside, mix(vec3(0.97, 0.95, 0.92), skin, 0.45), teeth * 0.6);
     float rimIn = smoothstep(0.0, 0.16, tv) * (1.0 - smoothstep(0.05, 0.22, tv)) + smoothstep(0.72, 0.90, tv) * (1.0 - smoothstep(0.90, 1.0, tv));
-    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.4);
+    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.15);
     c.rgb = mix(c.rgb, inside, clamp(gap, 0.0, 1.0));
     return c;
   }
