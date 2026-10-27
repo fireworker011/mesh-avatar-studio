@@ -278,10 +278,11 @@ export function createRenderer(engine, rig) {
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
     float drop = lids.x - top;
-    float lashH = max(2.5, Hm * 0.3);
+    float lashH = max(2.0, Hm * 0.22);
     // the ink's bottom (the opening's top line) lands on the lid edge, over the ball's cut
     float ys = p.y - drop - 0.5;
-    float band = smoothstep(top - lashH - 1.0, top - lashH, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
+    // solid where it meets the lid, thinning out upward like the open eye's lash
+    float band = smoothstep(top - lashH - 1.0, top - 0.4 * lashH, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
     float ride = band * side * smoothstep(0.5, 1.5, drop) * (1.0 - shut);
     if (ride <= 0.001) return hidden;
     vec4 lash = texAt(vec2(p.x, ys)) * ride;
