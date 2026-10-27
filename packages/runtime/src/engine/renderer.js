@@ -228,6 +228,12 @@ export function createRenderer(engine, rig) {
     vec3 skin = mix(above, below, smoothstep(top, bot, p.y));
     vec4 c = base;
     c.rgb = mix(c.rgb, skin, cover);
+    // A faint shadow under the lid line: darkest at the line, back to skin about half the
+    // eye height above it. The tint is the skin's own hue, so the shade stays skin.
+    float shadeUp = (1.0 - smoothstep(lid - 0.5, lid + thick, p.y)) * exp(-max(lid - p.y, 0.0) / max(H * 0.45, 1.5));
+    float shade = 0.35 * shadeUp * side * smoothstep(0.0, 0.4, close) * (0.4 + 0.6 * taper);
+    vec3 tint = 0.82 * skin / max(max(skin.r, max(skin.g, skin.b)), 0.05);
+    c.rgb = mix(c.rgb, c.rgb * tint, shade * c.a);
     vec3 ink = vec3(0.08, 0.045, 0.035) * max(c.a, cover);
     c.rgb = mix(c.rgb, ink, clamp(lash, 0.0, 0.98));
     return c;
@@ -249,7 +255,12 @@ export function createRenderer(engine, rig) {
     float F = lidFeather(Hm);
     float u = (p.x - box.x) / span;
     float uf = 2.0 / span;
-    if (u < -0.04 - uf || u > 1.04 + uf) return c;
+    // the side and top edges fade over a few pixels more, so the skin under the lash meets
+    // what is left of the cut-out without a visible rim; the top fade still stops short of
+    // the brow
+    float soft = clamp(Hm * 0.3, 2.0, 5.0);
+    float us = soft / span;
+    if (u < -0.04 - uf - us || u > 1.04 + uf + us) return c;
     float uu = clamp(u, 0.0, 1.0);
     float top = crv(e, true, uu), bot = crv(e, false, uu);
     vec2 lids = eyeLids(e, uu, top, bot);
@@ -259,8 +270,8 @@ export function createRenderer(engine, rig) {
     // left as drawn: the hidden band stops halfway to the brow centre line (box.z).
     float above = max(top - max(3.0, Hm * 0.75), min(top - 3.0, mix(box.z, top, 0.5)));
     float below = mix(lids.x, max(lids.x, bot + max(2.0, Hm * 0.45)), shut);
-    float side = smoothstep(-0.02 - uf, 0.03, u) * (1.0 - smoothstep(0.97, 1.02 + uf, u));
-    float inside = smoothstep(above - F, above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
+    float side = smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u));
+    float inside = smoothstep(max(above - F - soft, mix(box.z, top, 0.5) - F), above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
     return c * (1.0 - inside * side * smoothstep(0.0, 0.15, close));
   }
 
