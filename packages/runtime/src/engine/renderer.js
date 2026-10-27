@@ -193,7 +193,8 @@ export function createRenderer(engine, rig) {
       float luma = dot(c, vec3(0.22, 0.68, 0.10));
       float mx = max(c.r, max(c.g, c.b));
       float mn = min(c.r, min(c.g, c.b));
-      float score = luma - (mx - mn) * 1.1;
+      // the face's own warm tone wins over a grey patch; lips stay out by their place, not their tint
+      float score = luma - (mx - mn) * 0.4;
       if (luma > 0.30 && luma < 0.96 && score > bestS) { bestS = score; best = c; }
     }
     return best;
@@ -237,24 +238,25 @@ export function createRenderer(engine, rig) {
     float upper = smoothstep(upLip - aa, upLip + aa, t) * (1.0 - smoothstep(up - aa, up + aa, t)) * side;
     float loMid = clamp((t - lo) / max(loLip - lo, aa), 0.0, 1.0);
     float upMid = clamp((up - t) / max(up - upLip, aa), 0.0, 1.0);
-    vec3 loCol = mix(lip * vec3(0.55, 0.38, 0.40), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
+    vec3 loCol = mix(lip * vec3(0.75, 0.6, 0.62), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
     float gloss = exp(-((loMid - 0.62) * (loMid - 0.62)) * 8.0) * side;
-    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.35);
-    vec3 upCol = mix(lip * vec3(0.48, 0.32, 0.34), lip, smoothstep(0.15, 0.85, upMid));
+    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.12);
+    vec3 upCol = mix(lip * vec3(0.7, 0.55, 0.57), lip, smoothstep(0.15, 0.85, upMid));
     c.rgb = mix(c.rgb, loCol, clamp(lower, 0.0, 1.0));
     c.rgb = mix(c.rgb, upCol, clamp(upper, 0.0, 1.0));
 
     float gap = 0.0;
     if (k > 0.0) gap = smoothstep(up - aa, up + aa, t) * (1.0 - smoothstep(lo - aa, lo + aa, t)) * smoothstep(0.0, 0.08, k);
     float tv = clamp((t - up) / max(lo - up, aa), 0.0, 1.0);
-    vec3 inside = mix(vec3(0.05, 0.012, 0.018), lip * vec3(0.22, 0.08, 0.09), 0.65);
+    // the inside and teeth take the lip's tone, so no near-black or pure white sits in a soft face
+    vec3 inside = mix(vec3(0.05, 0.012, 0.018), lip * vec3(0.42, 0.22, 0.22), 0.85);
     inside = mix(inside, inside * vec3(1.25, 1.05, 1.0), tv);
     float tongue = smoothstep(0.50, 0.78, tv) * (1.0 - smoothstep(0.30, 0.78, abs(s) / max(wf, 0.2))) * smoothstep(0.4, 0.7, openAmt);
     inside = mix(inside, mix(lip, vec3(0.86, 0.40, 0.42), 0.62), tongue);
     float teeth = (1.0 - smoothstep(0.06, 0.20, tv)) * smoothstep(0.32, 0.55, openAmt) * (1.0 - smoothstep(0.42, 0.80, abs(s) / max(wf, 0.2)));
-    inside = mix(inside, vec3(0.97, 0.95, 0.92), teeth);
+    inside = mix(inside, mix(vec3(0.97, 0.95, 0.92), skin, 0.45), teeth * 0.6);
     float rimIn = smoothstep(0.0, 0.16, tv) * (1.0 - smoothstep(0.05, 0.22, tv)) + smoothstep(0.72, 0.90, tv) * (1.0 - smoothstep(0.90, 1.0, tv));
-    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.85);
+    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.4);
     c.rgb = mix(c.rgb, inside, clamp(gap, 0.0, 1.0));
     return c;
   }
@@ -292,7 +294,8 @@ export function createRenderer(engine, rig) {
       return vec4(mix(base.rgb, col, cov), 1.0);
     }
     if (abs(s) > 1.7 || t < -uMouthFit.y - 2.0 || t > uMouthFit.x + 2.0) return base;
-    return mouthVector(base, d, n, open, s, t, form, aa);
+    // the painting around it is as soft as its own source pixels, so the edge is too
+    return mouthVector(base, d, n, open, s, t, form, max(aa, min(2.0, uMouth.w * 0.18)));
   }
 
   // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
