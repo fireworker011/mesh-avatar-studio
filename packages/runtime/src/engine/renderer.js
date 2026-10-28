@@ -419,7 +419,7 @@ export function createRenderer(engine, rig) {
       : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
     // the drawn lash is hidden only once the lid has moved off it, when the riding copy
     // takes over; before that it stays as drawn, so a nearly open eye keeps its full lash
-    float lift = max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), shut);
+    float lift = max(max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), smoothstep(0.3, 0.345, close)), shut);
     vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close) * lift);
     // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
     // band just above the opening is shown again, moved down by how far the lid has come.
