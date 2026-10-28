@@ -418,10 +418,8 @@ export function createRenderer(engine, rig) {
     float sideW = e == 0
       ? smoothstep(-0.02 - uf - 3.0 * us, 0.03 - us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u))
       : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
-    // the drawn lash is hidden only once the lid has moved off it, when the riding copy
-    // takes over; before that it stays as drawn, so a nearly open eye keeps its full lash
-    float lift = max(max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), smoothstep(0.19, 0.23, close)), shut);
-    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close) * lift);
+    // the drawn lash is hidden as soon as the lid moves; the riding copy below takes over
+    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut));
     // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
@@ -431,10 +429,16 @@ export function createRenderer(engine, rig) {
     float Ho = max(crv(1 - e, false, 0.5) - crv(1 - e, true, 0.5), 1.0);
     float lashH = max(2.0, min(Hm, Ho) * 0.22);
     // the ink's bottom (the opening's top line) lands on the lid edge, over the ball's cut
-    float ys = p.y - drop - 0.5;
+    // (nearly open, the copy sits on the drawn lash's own texels, so it is not blurred)
+    float thick = clamp(1.0 - close / 0.236, 0.0, 1.0);
+    float ys = p.y - drop - 0.5 * (1.0 - thick);
     // solid where it meets the lid, thinning out upward like the open eye's lash
-    float band = smoothstep(top - lashH - 1.0, top - 0.4 * lashH, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
-    float ride = band * side * smoothstep(0.5, 1.5, drop) * (1.0 - shut);
+    // nearly open (close < 0.236, the mapped sad value) the copy reaches as high as the hidden
+    // lash and its top edge comes down as the eye closes, so the lash thins without a step
+    float bandLo = mix(top - lashH - 1.0, max(above - F - soft, mix(box.z, top, 0.5) - F), thick);
+    float bandHi = mix(top - 0.4 * lashH, above + 0.8, thick);
+    float band = smoothstep(bandLo, bandHi, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
+    float ride = band * side * max(smoothstep(0.5, 1.5, drop), 1.0 - smoothstep(0.2, 0.236, close)) * (1.0 - shut);
     if (ride <= 0.001) return hidden;
     vec4 lash = texAt(vec2(p.x, ys)) * ride;
     return lash + hidden * (1.0 - lash.a);
