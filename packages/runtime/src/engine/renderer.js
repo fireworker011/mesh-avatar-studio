@@ -434,9 +434,13 @@ export function createRenderer(engine, rig) {
     float ys = p.y - drop - 0.5 * (1.0 - thick);
     // solid where it meets the lid, thinning out upward like the open eye's lash
     // nearly open (close < 0.236, the mapped sad value) the copy reaches as high as the hidden
-    // lash and its top edge comes down as the eye closes, so the lash thins without a step
-    float bandLo = mix(top - lashH - 1.0, max(above - F - soft, mix(box.z, top, 0.5) - F), thick);
-    float bandHi = mix(top - 0.4 * lashH, above + 0.8, thick);
+    // lash and its top edge comes down as the eye closes, so the lash thins without a step.
+    // The top of that edge stays up at the hidden band's top while the bottom comes down, so
+    // the thinning lash fades up into what is left above it (hair, crease) instead of leaving
+    // a pale gap under a thin hard line
+    float reachLo = max(thick, smoothstep(0.05, 0.4, thick)), reachHi = clamp(2.0 * thick - reachLo, 0.0, reachLo);
+    float bandLo = mix(top - lashH - 1.0, max(above - F - soft, mix(box.z, top, 0.5) - F), reachLo);
+    float bandHi = mix(top - 0.4 * lashH, above + 0.8, reachHi);
     float band = smoothstep(bandLo, bandHi, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
     float ride = band * side * max(smoothstep(0.5, 1.5, drop), 1.0 - smoothstep(0.2, 0.236, close)) * (1.0 - shut);
     if (ride <= 0.001) return hidden;
