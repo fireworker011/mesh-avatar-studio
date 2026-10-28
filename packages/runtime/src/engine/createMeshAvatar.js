@@ -250,8 +250,9 @@ export async function createMeshAvatarImpl(canvas, options) {
     let lo = 0, hi = 1;
     for (let i = 0; i < 30; i++) {
       const b = (lo + hi) / 2;
-      const t = Math.min(1, Math.max(0, (b - 0.25) / 0.43));
-      const slide = b * b * (0.73 + 0.86 * (1 - t * t * (3 - 2 * t))) + 0.27 * b ** 12;
+      const sm = (e0, e1) => { const t = Math.min(1, Math.max(0, (b - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+      const g = 0.688 * sm(0.25, 0.59) + 0.193 * sm(0.419, 0.64) + 0.119 * sm(0.576, 0.669);
+      const slide = b * b * (0.73 + 0.86 * (1 - g)) + 0.27 * b ** 12;
       if (slide < want) lo = b; else hi = b;
     }
     return 1 - (lo + hi) / 2;

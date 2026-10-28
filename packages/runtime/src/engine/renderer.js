@@ -131,11 +131,13 @@ export function createRenderer(engine, rig) {
   // Must match eyeLidsRaw() / eyeLids() in rig.js.
   // How far down the lid has slid, as a share of the opening, for b = 1 - open: open 0.5 shows
   // a little over half the iris, 0.35 about half, and the steps 0.15 / 0.35 / 0.5 / 0.7 / 1
-  // open about evenly; 0 and 1 are where they were. Must match exprEyeOpen() in
+  // open about evenly, and from 0.35 to 0.5 the lid rises in even steps (no flat spot);
+  // 0 and 1 are where they were. Must match exprEyeOpen() in
   // createMeshAvatar.js.
   float lidSlide(float b) {
     b = clamp(b, 0.0, 1.0);
-    return b * b * (0.73 + 0.86 * (1.0 - smoothstep(0.25, 0.68, b))) + 0.27 * pow(b, 12.0);
+    float g = 0.688 * smoothstep(0.25, 0.59, b) + 0.193 * smoothstep(0.419, 0.64, b) + 0.119 * smoothstep(0.576, 0.669, b);
+    return b * b * (0.73 + 0.86 * (1.0 - g)) + 0.27 * pow(b, 12.0);
   }
 
   vec2 eyeLidsRaw(int e, float u) {
