@@ -129,6 +129,14 @@ export function createRenderer(engine, rig) {
   // Upper lid line and lower lid line of eye e at column u, for the current open/smile state.
   // Must match eyeLids() in rig.js, which moves the lash meshes to the same lines.
   // Must match eyeLidsRaw() / eyeLids() in rig.js.
+  // How far down the lid has slid, as a share of the opening, for b = 1 - open. It starts
+  // slowly and speeds up near the end, so open 0.35 still shows about half the iris and
+  // 0 and 1 are where they were.
+  float lidSlide(float b) {
+    b = clamp(b, 0.0, 1.0);
+    return 0.73 * b * b + 0.27 * pow(b, 12.0);
+  }
+
   vec2 eyeLidsRaw(int e, float u) {
     u = clamp(u, 0.0, 1.0);
     vec4 st = uEyeState[e];
@@ -140,8 +148,7 @@ export function createRenderer(engine, rig) {
     // closing, the lid slides down as a whole and keeps the arch of the opening's top line
     // (blending top into bottom flattened it into a stiff straight cut); near the corners
     // it meets the lower line sooner and rests there
-    // it starts slowly, so a half-open slider still shows the top of the iris under the lid
-    float slide = (H + 1.0) * pow(b, 1.6), rest = closed - top;
+    float slide = (H + 1.0) * lidSlide(b), rest = closed - top;
     // a soft meeting, so the lash does not hook down where the lid reaches the corner;
     // it turns hard as the eye shuts, so the closed line is where it was
     float km = 3.0 * (1.0 - clamp(b, 0.0, 1.0)) + 1e-4;
@@ -410,7 +417,10 @@ export function createRenderer(engine, rig) {
     float sideW = e == 0
       ? smoothstep(-0.02 - uf - 3.0 * us, 0.03 - us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u))
       : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
-    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close));
+    // the drawn lash is hidden only once the lid has moved off it, when the riding copy
+    // takes over; before that it stays as drawn, so a nearly open eye keeps its full lash
+    float lift = max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), shut);
+    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close) * lift);
     // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
     // band just above the opening is shown again, moved down by how far the lid has come.
     // It fades out as the eye shuts, where the painted lid takes over.
