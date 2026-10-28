@@ -240,6 +240,21 @@ export async function createMeshAvatarImpl(canvas, options) {
     lastParameters = out;
     return out;
   }
+  // Expressions (angry 0.72, sad 0.78, ...) were set on the earlier lid curve, where the lid
+  // dropped (1 - open)^1.6 of the opening; the shader's lidSlide() now starts slower so the
+  // slider's half-open shows more iris. On a painted blink the expression's share of the
+  // opening is moved to the value that puts the lid where it was before.
+  function exprEyeOpen(m) {
+    if (!(m > 0 && m < 1)) return m;
+    const want = (1 - m) ** 1.6;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 30; i++) {
+      const b = (lo + hi) / 2;
+      if (0.73 * b * b + 0.27 * b ** 12 < want) lo = b; else hi = b;
+    }
+    return 1 - (lo + hi) / 2;
+  }
+  const shaderEyeOpen = (v, m) => (paintBlink && m > 0 && m < 1 ? v * exprEyeOpen(m) / m : v);
   function tick(dt) {
     const P = updateParameters(dt);
     const phys = physics.step(P, dt);
@@ -283,8 +298,8 @@ export async function createMeshAvatarImpl(canvas, options) {
     R.draw({
       angleX: P.angleX, angleY: P.angleY, angleZ: P.angleZ,
       eyes: [
-        eyeOpenFor(P.eyeROpen), P.eyeSmile, P.gazeX * ball, -P.gazeY * ball * 0.6,
-        eyeOpenFor(P.eyeLOpen), P.eyeSmileL ?? P.eyeSmile, P.gazeX * ball * 0.85, -P.gazeY * ball * 0.6,
+        eyeOpenFor(shaderEyeOpen(P.eyeROpen, expression.mix.eyeOpen)), P.eyeSmile, P.gazeX * ball, -P.gazeY * ball * 0.6,
+        eyeOpenFor(shaderEyeOpen(P.eyeLOpen, expression.mix.eyeOpenL)), P.eyeSmileL ?? P.eyeSmile, P.gazeX * ball * 0.85, -P.gazeY * ball * 0.6,
       ],
       // with sprites the drawn mouths replace the shader-painted one
       mouthOpen: sprites ? 0 : P.mouthOpen, mouthForm: P.mouthForm, cheek: P.blush,
