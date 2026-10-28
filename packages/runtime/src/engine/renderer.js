@@ -129,12 +129,13 @@ export function createRenderer(engine, rig) {
   // Upper lid line and lower lid line of eye e at column u, for the current open/smile state.
   // Must match eyeLids() in rig.js, which moves the lash meshes to the same lines.
   // Must match eyeLidsRaw() / eyeLids() in rig.js.
-  // How far down the lid has slid, as a share of the opening, for b = 1 - open. It starts
-  // slowly and speeds up near the end, so open 0.35 still shows about half the iris and
-  // 0 and 1 are where they were.
+  // How far down the lid has slid, as a share of the opening, for b = 1 - open: open 0.5 shows
+  // a little over half the iris, 0.35 about half, and the steps 0.15 / 0.35 / 0.5 / 0.7 / 1
+  // open about evenly; 0 and 1 are where they were. Must match exprEyeOpen() in
+  // createMeshAvatar.js.
   float lidSlide(float b) {
     b = clamp(b, 0.0, 1.0);
-    return 0.73 * b * b + 0.27 * pow(b, 12.0);
+    return b * b * (0.73 + 0.86 * (1.0 - smoothstep(0.25, 0.68, b))) + 0.27 * pow(b, 12.0);
   }
 
   vec2 eyeLidsRaw(int e, float u) {
@@ -419,7 +420,7 @@ export function createRenderer(engine, rig) {
       : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
     // the drawn lash is hidden only once the lid has moved off it, when the riding copy
     // takes over; before that it stays as drawn, so a nearly open eye keeps its full lash
-    float lift = max(max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), smoothstep(0.3, 0.345, close)), shut);
+    float lift = max(max(smoothstep(0.5, 1.5, (Hm + 1.0) * lidSlide(close)), smoothstep(0.19, 0.23, close)), shut);
     vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut) * smoothstep(0.0, 0.15, close) * lift);
     // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
     // band just above the opening is shown again, moved down by how far the lid has come.

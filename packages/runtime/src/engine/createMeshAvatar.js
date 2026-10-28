@@ -241,8 +241,8 @@ export async function createMeshAvatarImpl(canvas, options) {
     return out;
   }
   // Expressions (angry 0.72, sad 0.78, ...) were set on the earlier lid curve, where the lid
-  // dropped (1 - open)^1.6 of the opening; the shader's lidSlide() now starts slower so the
-  // slider's half-open shows more iris. On a painted blink the expression's share of the
+  // dropped (1 - open)^1.6 of the opening; the shader's lidSlide() (same formula below) now
+  // starts slower so the slider's half-open shows more iris. On a painted blink the expression's share of the
   // opening is moved to the value that puts the lid where it was before.
   function exprEyeOpen(m) {
     if (!(m > 0 && m < 1)) return m;
@@ -250,7 +250,9 @@ export async function createMeshAvatarImpl(canvas, options) {
     let lo = 0, hi = 1;
     for (let i = 0; i < 30; i++) {
       const b = (lo + hi) / 2;
-      if (0.73 * b * b + 0.27 * b ** 12 < want) lo = b; else hi = b;
+      const t = Math.min(1, Math.max(0, (b - 0.25) / 0.43));
+      const slide = b * b * (0.73 + 0.86 * (1 - t * t * (3 - 2 * t))) + 0.27 * b ** 12;
+      if (slide < want) lo = b; else hi = b;
     }
     return 1 - (lo + hi) / 2;
   }
