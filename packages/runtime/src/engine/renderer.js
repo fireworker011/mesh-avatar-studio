@@ -445,9 +445,14 @@ export function createRenderer(engine, rig) {
     float bandHi = mix(top - 0.4 * lashH, above + 0.8, reachHi);
     float band = smoothstep(bandLo, bandHi, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
     float ride = band * side * max(smoothstep(0.5, 1.5, drop), 1.0 - smoothstep(0.2, 0.236, close)) * (1.0 - shut);
-    if (ride <= 0.001) return hidden;
+    // nearly open (open 0.85 and up) the whole hidden area is the drawn picture moved down
+    // with the lid, cross-faded in, so no half-cleared edge lets the skin under it show;
+    // between that and the sad value (0.764) it blends into the riding copy below
+    float whole = clamp((0.236 - close) / 0.086, 0.0, 1.0);
+    vec4 moved = mix(c, texAt(vec2(p.x, p.y - drop)), inside * side);
+    if (ride <= 0.001) return mix(hidden, moved, whole);
     vec4 lash = texAt(vec2(p.x, ys)) * ride;
-    return lash + hidden * (1.0 - lash.a);
+    return mix(lash + hidden * (1.0 - lash.a), moved, whole);
   }
 
   void main() {
