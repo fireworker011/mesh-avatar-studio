@@ -224,14 +224,14 @@ export function createRenderer(engine, rig) {
   // pixels. Scaling 20px by a 6px eye collapses the hole inside its own feather.
   // Lip and skin colours come from the picture. The edge is about one screen pixel,
   // so a zoomed face redraws the mouth sharply instead of enlarging source texels.
-  vec4 mouthVector(vec4 base, vec2 d, vec2 n, float open, float s, float t, float form, float aa) {
+  vec4 mouthVector(vec4 base, vec2 p, vec2 d, vec2 n, float open, float s, float t, float form, float aa) {
     float unit = max(uMouth.w, 1.0);
     float down = max(uMouthFit.x, unit * 0.45);
     float upFit = max(uMouthFit.y, unit * 0.2);
     float wf = mix(0.96, form < 0.0 ? 1.08 : 0.58, abs(form));
     float k = 1.0 - (s / wf) * (s / wf);
     float line = uMouthState.z * (1.0 - clamp(s * s, 0.0, 1.0));
-    float hk = k > 0.0 ? pow(k, mix(0.55, form < 0.0 ? 0.38 : 0.92, abs(form))) : 0.0;
+    float hk = k > 0.0 ? pow(k, mix(0.85, form < 0.0 ? 0.6 : 1.0, abs(form))) : 0.0;
     float rad = length(vec2(s / 1.30, (t - line * 0.25) / (unit * 0.95)));
     if (rad > 1.35 && abs(s) > wf + 0.25) return base;
 
@@ -248,26 +248,47 @@ export function createRenderer(engine, rig) {
     float loLip = min(lo + lipLoT * pinch, down);
     float upLip = max(up - lipUpT * pinch, -upFit);
 
+    // The drawn lips themselves part: above the gap the picture is squeezed up from the
+    // lip line to a point over the upper lip, below it down to a point under the lower lip,
+    // so the lips keep their own pixels instead of being repainted. The squeeze reaches a
+    // little past the corners and eases off there, so a round mouth's lips stay joined to
+    // the unmoved lips beside it; the lower half starts just under the line, so the line's
+    // pale seam is not pulled up to the gap's lower edge.
+    float wM = max(wf * 1.35, wf + 0.3);
+    float kM = clamp(1.0 - (s / wM) * (s / wM), 0.0, 1.0);
+    float hM = max(hk, 0.6 * pow(kM, 1.5));
+    float upM = min(up, line - min(unit * (0.04 + openAmt * 0.24 * hM), upFit * 0.7));
+    float loM = max(lo, min(line + openAmt * gapH * hM, down - lipLoT * 0.35));
+    float topA = -upFit - unit * 0.3, botB = down + unit * 0.45;
+    float seam = min(unit * 0.08, (botB - line) * 0.2);
+    float tt = t;
+    if (t < upM) tt = topA + (t - topA) * (line - topA) / max(upM - topA, aa);
+    else if (t > loM) tt = line + seam + (t - loM) * (botB - line - seam) / max(botB - loM, aa);
+    // in the gap's own soft edge the picture there would be the skin under the lips, which
+    // showed as a pale rim; it shows the lip line's own pixels instead
+    else tt = t > 0.5 * (upM + loM) ? line + seam : line;
+    tt = t < topA || t > botB ? t : tt;
+    vec4 c = texAt(p + n * (tt - t));
+    // a picture whose mouth is only a drawn line has no lips to move apart: where the moved
+    // pixels are still skin-coloured the lips are painted in, as before
     vec3 skin = mouthSkin(d, n);
     vec3 lip = mouthLip(d, n);
-    float erase = (1.0 - smoothstep(0.6, 1.0, rad)) * smoothstep(0.04, 0.20, openAmt);
-    vec4 c = base;
-    c.rgb = mix(c.rgb, skin, clamp(erase, 0.0, 1.0));
-
+    vec3 ls = lip - skin;
+    float lipness = clamp(dot(c.rgb - skin, ls) / max(dot(ls, ls), 1e-4), 0.0, 1.0);
     float side = 1.0 - smoothstep(wf * 0.88, wf * 1.06, abs(s));
     float lower = smoothstep(lo - aa, lo + aa, t) * (1.0 - smoothstep(loLip - aa, loLip + aa, t)) * side;
     float upper = smoothstep(upLip - aa, upLip + aa, t) * (1.0 - smoothstep(up - aa, up + aa, t)) * side;
     float loMid = clamp((t - lo) / max(loLip - lo, aa), 0.0, 1.0);
     float upMid = clamp((up - t) / max(up - upLip, aa), 0.0, 1.0);
     vec3 loCol = mix(lip * vec3(0.75, 0.6, 0.62), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
-    float gloss = exp(-((loMid - 0.62) * (loMid - 0.62)) * 8.0) * side;
-    loCol = mix(loCol, mix(lip, vec3(1.0, 0.92, 0.90), 0.4), gloss * 0.05);
     vec3 upCol = mix(lip * vec3(0.7, 0.55, 0.57), lip, smoothstep(0.15, 0.85, upMid));
-    c.rgb = mix(c.rgb, loCol, clamp(lower, 0.0, 1.0));
-    c.rgb = mix(c.rgb, upCol, clamp(upper, 0.0, 1.0));
+    float paint = (1.0 - smoothstep(0.35, 0.75, lipness)) * smoothstep(0.04, 0.20, openAmt);
+    c.rgb = mix(c.rgb, loCol, clamp(lower * paint, 0.0, 1.0));
+    c.rgb = mix(c.rgb, upCol, clamp(upper * paint, 0.0, 1.0));
 
     float gap = 0.0;
-    if (k > 0.0) gap = smoothstep(up - aa, up + aa, t) * (1.0 - smoothstep(lo - aa, lo + aa, t)) * smoothstep(0.0, 0.08, k);
+    float ea = max(aa, 0.6);
+    if (k > 0.0) gap = smoothstep(up - ea, up + ea, t) * (1.0 - smoothstep(lo - ea, lo + ea, t)) * smoothstep(0.0, 0.08, k);
     float tv = clamp((t - up) / max(lo - up, aa), 0.0, 1.0);
     // the inside and teeth take the lip's tone, so no near-black or pure white sits in a soft face
     vec3 inside = mix(vec3(0.05, 0.012, 0.018), lip * vec3(0.42, 0.22, 0.22), 0.85);
@@ -316,7 +337,7 @@ export function createRenderer(engine, rig) {
     }
     if (abs(s) > 1.7 || t < -uMouthFit.y - 2.0 || t > uMouthFit.x + 2.0) return base;
     // the painting around it is as soft as its own source pixels, so the edge is too
-    return mouthVector(base, d, n, open, s, t, form, max(aa, min(2.0, uMouth.w * 0.18)));
+    return mouthVector(base, p, d, n, open, s, t, form, max(aa, min(2.0, uMouth.w * 0.18)));
   }
 
   // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
