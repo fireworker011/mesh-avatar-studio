@@ -115,6 +115,28 @@ class AgentToolsTest(unittest.TestCase):
         wrong = self.project / "source.jpg"
         Image.new("RGB", (100, 100)).save(wrong)
         self.assertEqual(self.cli("new-project", wrong, name, "--force").returncode, 1)
+        self.assertNotIn("fullBody", json.loads(before))
+
+    def test_full_body_draft_includes_every_limb(self):
+        image = self.project / "tall.png"
+        Image.new("RGBA", (180, 360), (0, 0, 0, 0)).save(image)
+        name = "full-body-draft-check"
+        created = ROOT / "projects" / name
+        self.addCleanup(module_cleanup, created)
+        result = self.cli("new-project", image, name, "--full-body")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rig = json.loads((created / "rig.draft.json").read_text())
+        bones = rig["fullBody"]["bones"]
+        self.assertEqual(
+            set(bones),
+            {
+                "torso", "hips", "upperArmL", "lowerArmL", "handL", "upperArmR", "lowerArmR", "handR",
+                "upperLegL", "lowerLegL", "footL", "upperLegR", "lowerLegR", "footR",
+            },
+        )
+        self.assertTrue(all(bone["pivot"] != bone["tip"] for bone in bones.values()))
+        self.assertLess(rig["head"]["cy"], rig["body"]["pivotY"])
+        self.assertGreater(rig["image"]["height"], rig["image"]["width"])
 
     def test_variants_cover_only_regions_and_missing_variants_are_clean(self):
         eyes, mouth = edit_masks(self.rig, (100, 100))

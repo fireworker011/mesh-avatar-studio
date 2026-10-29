@@ -1,3 +1,7 @@
+import { FULL_BODY_BONES, LIMB_PARAMS } from '../rig/bones.js';
+import { buildSkeleton } from '../pose/skeleton.js';
+import { faceDensity } from './renderer.js';
+
 export const PARAMS = [
   { id: 'angleX', label: 'Face angle X', min: -30, max: 30, def: 0, group: 'Head and body' },
   { id: 'angleY', label: 'Face angle Y', min: -30, max: 30, def: 0, group: 'Head and body' },
@@ -18,12 +22,25 @@ export const PARAMS = [
   { id: 'armAngle', label: 'Arm angle', min: -10, max: 10, def: 0, group: 'Hand' },
   { id: 'handAngle', label: 'Wrist angle', min: -10, max: 10, def: 0, group: 'Hand' },
   { id: 'fingerTap', label: 'Finger tap', min: 0, max: 1, def: 0, group: 'Hand' },
+  ...LIMB_PARAMS.map(param => ({ id: param.id, label: param.label, min: -1, max: 1, def: 0, group: 'Full body' })),
 ];
 
 // Reference algorithms are intentionally retained as JavaScript; the factory's rig input
 // and public TypeScript adapter are typed, with numerical regression covering this port.
-/** @param {import('../rig/types').Rig} rig */
-export function createRig(rig) {
+// Bones of a limb that a cut-out part rotates with. The torso, hips, spine, neck, head
+// and clavicles stay with the cut base: a part's chain stops at the first of those.
+const CUT_LIMBS = new Set(['upperArmL', 'lowerArmL', 'handL', 'upperArmR', 'lowerArmR', 'handR',
+  'upperLegL', 'lowerLegL', 'footL', 'upperLegR', 'lowerLegR', 'footR']);
+// Share of the body-yaw slide per layer. The front arm runs a little ahead of the torso:
+// part tools size the shoulder caps to hide its root over that margin (0.2 x 0.08 x span).
+const YAW_DEPTH = { torso: 0.5, front: 0.7, back: 0.05, leg: 0 };
+
+/**
+ * @param {import('../rig/types').Rig} rig
+ * @param {{ cutout?: boolean }} [options] cutout: limbs are separate rigid parts (parts.json
+ *   with a cut base); the base is then never skinned to a limb bone. Ignored on a bust.
+ */
+export function createRig(rig, options = {}) {
   const IMG = { w: rig.image.width, h: rig.image.height };
   const gaussian = (x, y, a) => a ? Math.exp(-(((x - a.cx) / a.rx) ** 2 + ((y - a.cy) / a.ry) ** 2)) : 0;
   // ---- face features ----
@@ -94,6 +111,21 @@ export function createRig(rig) {
   // face so its rim falls in the background, and its slope is zero at the rim.
   const HEAD = rig.head;
   const BODY = rig.body;
+  const FULL = rig.fullBody ?? null;
+  const CUT = !!(options.cutout && FULL);
+  // 1 for a bust (and a bust-sized full-body face). Smaller eyes shrink the pixel
+  // offsets below; head shift, roll and the traced eyelids already come from the rig.
+  const FACE = faceDensity(rig).scale;
+  const PARENT = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.parent]));
+  const PARAM_OF = Object.fromEntries(FULL_BODY_BONES.map(bone => [bone.name, bone.param]));
+  // Extra spine, neck, clavicle and finger bones exist only for an anatomical pose.
+  // A bust, and a full-body pose that never sets skeletonAngles, never reads them.
+  const SKELETON = buildSkeleton(rig);
+  const BONES = FULL ? { ...FULL.bones, ...(SKELETON?.extraBones ?? {}) } : null;
+  const boneOf = name => BONES?.[name];
+  const parentOf = (name, P) => P?.skeletonParents && Object.prototype.hasOwnProperty.call(P.skeletonParents, name)
+    ? P.skeletonParents[name]
+    : (PARENT[name] ?? null);
 
   const sstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -138,8 +170,26 @@ export function createRig(rig) {
 
   // Per-vertex weights of the base layer, computed once from the rest position.
   // hair: 0..1 from hairmask.png, so strands only move actual hair.
+  // Distance to the segment. Past either end the bone lets go, so the next segment
+  // owns its own interior. At the shared joint both distances are equal and both weights survive.
+  function boneWeight(x, y, bone) {
+    const ax = bone.pivot[0], ay = bone.pivot[1], bx = bone.tip[0], by = bone.tip[1];
+    const vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy;
+    if (len2 < 1 || bone.radius <= 0) return 0;
+    const u = ((x - ax) * vx + (y - ay) * vy) / len2;
+    const uClamped = Math.min(1, Math.max(0, u));
+    let d = Math.hypot(x - (ax + vx * uClamped), y - (ay + vy * uClamped));
+    const outside = u < 0 ? -u : u > 1 ? u - 1 : 0;
+    if (outside) d += outside * Math.sqrt(len2) * 0.65;
+    const radius = bone.radius;
+    if (d >= radius) return 0;
+    const t = 1 - d / radius;
+    const radial = t * t * (3 - 2 * t);
+    return radial < 0.02 ? 0 : radial;
+  }
+
   function baseWeights(x, y, hair = 1) {
-    return {
+    const weights = {
       head: headWeight(x, y),
       turn: turnWeight(x, y),
       strands: strandWeights(x, y, hair),
@@ -159,6 +209,38 @@ export function createRig(rig) {
       breath: 1 - sstep(...BODY.breathBand, y),
       shoulder: BODY.shoulders.reduce((sum, area) => sum + gaussian(x, y, area), 0),
     };
+    if (FULL) {
+      const mask = (1 - weights.head) ** 2;
+      const collect = (names, maskFor, extraFor = () => 0) => {
+        const hits = [];
+        let sum = 0;
+        for (const name of names) {
+          const limb = boneOf(name);
+          if (!limb) continue;
+          const weight = boneWeight(x, y, limb) * maskFor(name) + extraFor(name);
+          if (weight < 0.03) continue;
+          hits.push([name, weight]);
+          sum += weight;
+        }
+        const scale = sum > 1 ? 1 / sum : 1;
+        return hits.map(([name, weight]) => [name, weight * scale]);
+      };
+      // The head rides the torso: what the mask takes from the limbs goes to the torso
+      // bone, so a torso bend carries the head and neck instead of shearing the neck.
+      weights.limbs = collect(FULL_BODY_BONES.map(bone => bone.name), () => mask, name => name === 'torso' ? 1 - mask : 0);
+      // Near the head (turn band) whatever no bone reaches, such as hair tips far from the
+      // torso axis, rides the torso too instead of staying behind and kinking.
+      const left = (1 - weights.limbs.reduce((sum, [, weight]) => sum + weight, 0)) * weights.turn;
+      if (left >= 0.03 && boneOf('torso')) {
+        const torso = weights.limbs.find(([name]) => name === 'torso');
+        if (torso) torso[1] += left; else weights.limbs.push(['torso', left]);
+      }
+      if (SKELETON) {
+        const headNames = new Set(SKELETON.headNames);
+        weights.skeletonLimbs = collect(SKELETON.limbNames, name => headNames.has(name) ? 1 : mask);
+      }
+    }
+    return weights;
   }
 
   // Head turn: features near the face centre travel further than the contour.
@@ -197,6 +279,179 @@ export function createRig(rig) {
     rotateAround(p, BODY.pivotX, BODY.pivotY, -P.bodyAngleZ / 10 * BODY.maxRoll * (1 - sstep(...BODY.rollBand, restY)));
   }
 
+  // ---- cut-out full body ----
+  // Shoulder span, the scale of the body-yaw depth shift.
+  const SPAN = FULL ? Math.hypot(FULL.bones.upperArmR.pivot[0] - FULL.bones.upperArmL.pivot[0],
+    FULL.bones.upperArmR.pivot[1] - FULL.bones.upperArmL.pivot[1]) : 0;
+  // Body yaw on a flat drawing: layers slide by depth instead of the torso warping. The arm
+  // that turns toward the camera slides furthest, the torso about half, the far arm hardly,
+  // and the legs not at all, so the feet stay planted. Positive yaw turns the chest toward
+  // image-right, which brings the image-left arm forward.
+  function yawShift(P, depth) {
+    const yaw = Math.max(-1, Math.min(1, (P.bodyAngleX ?? 0) / 10));
+    return yaw * SPAN * 0.08 * YAW_DEPTH[depth];
+  }
+  function frontSide(P) {
+    const yaw = P.bodyAngleX ?? 0;
+    return yaw > 0 ? 'L' : yaw < 0 ? 'R' : null;
+  }
+  // The torso's own lean, from the spine of an anatomical pose or the torso slider, as one
+  // small rotation of the cut base. The spine is not bent and nothing is skinned to it.
+  function torsoLean(P) {
+    let lean = 0;
+    if (P.skeletonAngles) {
+      for (const name of ['hips', 'spine1', 'spine2', 'spine3']) lean += P.skeletonAngles[name] || 0;
+    } else {
+      lean = (P.torsoBend ?? 0) * (FULL?.bones.torso.maxBend ?? 0);
+    }
+    return Math.max(-0.05, Math.min(0.05, lean));
+  }
+  function applyCutBody(p, restY, P, chest = 0, breathW = 1, shoulder = 0) {
+    const b = P.breath;
+    p[1] -= b * (5 * breathW + 4 * shoulder);
+    p[0] += (p[0] - BODY.chest.cx) * 0.012 * b * chest;
+    p[0] += yawShift(P, 'torso');
+    const roll = -P.bodyAngleZ / 10 * BODY.maxRoll + torsoLean(P);
+    rotateAround(p, BODY.pivotX, BODY.pivotY, roll * (1 - sstep(...BODY.rollBand, restY)));
+  }
+  const applyTorso = (p, restY, P, chest, breathW, shoulder) =>
+    (CUT ? applyCutBody : applyBody)(p, restY, P, chest, breathW, shoulder);
+
+  function localAngle(name, P, phys) {
+    const bone = boneOf(name);
+    if (!bone) return phys.limbs?.[name] ?? 0;
+    if (P.skeletonAngles && Object.prototype.hasOwnProperty.call(P.skeletonAngles, name)) {
+      return P.skeletonAngles[name] + (phys.limbs?.[name] ?? 0);
+    }
+    const param = PARAM_OF[name];
+    if (!param) return phys.limbs?.[name] ?? 0;
+    return (P[param] ?? 0) * bone.maxBend + (phys.limbs?.[name] ?? 0);
+  }
+  function posedPivot(name, P, phys, cache) {
+    if (cache[name]) return cache[name];
+    const rest = boneOf(name).pivot;
+    const parent = parentOf(name, P);
+    if (!parent) { cache[name] = [rest[0], rest[1]]; return cache[name]; }
+    const q = [rest[0], rest[1]];
+    applyChain(q, parent, P, phys, cache);
+    cache[name] = q;
+    return q;
+  }
+  function applyChain(point, name, P, phys, cache) {
+    const parent = parentOf(name, P);
+    if (parent) applyChain(point, parent, P, phys, cache);
+    const angle = localAngle(name, P, phys);
+    if (angle !== 0) {
+      const pivot = posedPivot(name, P, phys, cache);
+      rotateAround(point, pivot[0], pivot[1], angle);
+    }
+  }
+  // One rigid transform for the whole bone: rotation by the chain angle, then translation.
+  // A zero chain is skipped so a resting full-body point stays bit-identical.
+  function boneRigid(name, P, phys, cache) {
+    if (cache.rigid[name]) return cache.rigid[name];
+    let theta = 0, moving = false;
+    for (let n = name; n; n = parentOf(n, P)) {
+      const angle = localAngle(n, P, phys);
+      if (angle !== 0) moving = true;
+      theta += angle;
+    }
+    const bone = boneOf(name);
+    const rest = bone.pivot;
+    const posed = posedPivot(name, P, phys, cache.pivot);
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const rigid = {
+      name, theta, moving, c, s, posed, radius: bone.radius, restVector: [bone.tip[0] - rest[0], bone.tip[1] - rest[1]],
+      tx: posed[0] - (c * rest[0] - s * rest[1]),
+      ty: posed[1] - (s * rest[0] + c * rest[1]),
+    };
+    cache.rigid[name] = rigid;
+    return rigid;
+  }
+  // Dual-quaternion blend of the rigid bone transforms (Kavan et al., Skinning with
+  // Dual Quaternions). The limb interior is one bone, so it stays rigid. Only the
+  // joint band mixes two rotations, which keeps the hinge from collapsing the way a
+  // linear blend of positions does. A little linear blend at that band only trims
+  // the dual-quaternion bulge. Zero angles return before any of this runs.
+  function applyLimbs(point, weights, P, phys) {
+    if (!FULL || !weights?.length) return;
+    const cache = { pivot: {}, rigid: {} };
+    const used = [];
+    let moving = false, bound = 0, best = null;
+    for (const [name, weight] of weights) {
+      if (weight <= 0 || !boneOf(name)) continue;
+      const rigid = boneRigid(name, P, phys, cache);
+      if (rigid.moving) moving = true;
+      const item = { rigid, weight };
+      used.push(item);
+      if (!best || weight > best.weight) best = item;
+      bound += weight;
+    }
+    if (!moving || bound <= 0 || !used.length) return;
+    let lx = 0, ly = 0, dominant = 0;
+    const quats = [];
+    for (const { rigid, weight } of used) {
+      const half = rigid.theta * 0.5, qw = Math.cos(half), qz = Math.sin(half);
+      quats.push({
+        weight, w: qw, z: qz,
+        dx: 0.5 * (rigid.tx * qw + rigid.ty * qz),
+        dy: 0.5 * (-rigid.tx * qz + rigid.ty * qw),
+      });
+      const px = rigid.c * point[0] - rigid.s * point[1] + rigid.tx;
+      const py = rigid.s * point[0] + rigid.c * point[1] + rigid.ty;
+      lx += px * weight; ly += py * weight;
+      if (weight > dominant) dominant = weight;
+    }
+    if (bound < 1) {
+      quats.push({ weight: 1 - bound, w: 1, z: 0, dx: 0, dy: 0 });
+      lx += point[0] * (1 - bound); ly += point[1] * (1 - bound);
+    }
+    let ref = quats[0];
+    for (const q of quats) if (q.weight > ref.weight) ref = q;
+    let w = 0, z = 0, dx = 0, dy = 0;
+    for (const q of quats) {
+      const sign = q.w * ref.w + q.z * ref.z < 0 ? -1 : 1;
+      w += q.weight * q.w * sign; z += q.weight * q.z * sign;
+      dx += q.weight * q.dx * sign; dy += q.weight * q.dy * sign;
+    }
+    const mag = Math.hypot(w, z) || 1;
+    w /= mag; z /= mag; dx /= mag; dy /= mag;
+    const tx = 2 * (dx * w - dy * z);
+    const ty = 2 * (dy * w + dx * z);
+    const c = 1 - 2 * z * z, s = 2 * w * z;
+    const qx = c * point[0] - s * point[1] + tx;
+    const qy = s * point[0] + c * point[1] + ty;
+    const joint = bound > 0 ? 1 - dominant / Math.max(bound, dominant) : 0;
+    const mix = joint * 0.2;
+    let x = qx * (1 - mix) + lx * mix, y = qy * (1 - mix) + ly * mix;
+    // Volume and twist run only for an anatomical pose. The legacy slider path
+    // returns the dual-quaternion point above, which the hinge regression measures.
+    if (P.skeletonAngles && best) {
+      const pinch = 1 - Math.cos(Math.min(Math.abs(best.rigid.theta), Math.PI));
+      const band = best.rigid.radius * 0.55;
+      const px = best.rigid.posed[0], py = best.rigid.posed[1];
+      const dx = x - px, dy = y - py, dist = Math.hypot(dx, dy);
+      if (pinch > 0.05 && dist > 1 && dist < band) {
+        const push = pinch * 0.18 * (1 - dist / band) * best.rigid.radius;
+        x += dx / dist * push; y += dy / dist * push;
+      }
+      const tw = P.skeletonTwist?.[best.rigid.name] || 0;
+      if (tw) {
+        const rv = best.rigid.restVector;
+        const c = best.rigid.c, s = best.rigid.s;
+        const ax = rv[0] * c - rv[1] * s, ay = rv[0] * s + rv[1] * c;
+        const len = Math.hypot(ax, ay) || 1;
+        const ux = ax / len, uy = ay / len;
+        const rx = x - px, ry = y - py;
+        const along = rx * ux + ry * uy;
+        const foreshorten = Math.cos(tw);
+        x = px + along * ux + (rx - along * ux) * foreshorten;
+        y = py + along * uy + (ry - along * uy) * foreshorten;
+      }
+    }
+    point[0] = x; point[1] = y;
+  }
+
   // Base layer: hair and face-part offsets are added in rest space, then head, then body.
   function deformBase(x, y, w, P, phys, out) {
     const p = out;
@@ -212,22 +467,88 @@ export function createRig(rig) {
     p[0] += (phys.bunL[0] * w.bunL + phys.bunR[0] * w.bunR) * g;
     p[1] += (phys.bunL[1] * w.bunL + phys.bunR[1] * w.bunR) * g;
     // brows
-    p[1] -= P.browY * 7 * w.brow;
+    p[1] -= P.browY * 7 * FACE * w.brow;
     if (w.brow > 0.01) {
       const a = P.browAngle * 0.12 * w.brow;
       p[1] += (x - rig.face.brow.cx) * Math.sin(a);
     }
-    p[1] += P.mouthOpen * 3.5 * w.jaw;
+    p[1] += P.mouthOpen * 3.5 * FACE * w.jaw;
     // head turn, per part: nose and mouth travel further than the eyes, the far eye
-    // narrows and the near eye widens, the ears and buns slide the other way
+    // narrows and the near eye widens, the ears and buns slide the other way.
+    // The added distances are bust pixels; FACE shrinks them on a small full-body eye.
+    // Terms that already multiply (x - centre) scale with the feature and stay put.
     const ax = P.angleX / 30, ay = P.angleY / 30;
-    p[0] += ax * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
-      - ax * 9 * w.earR + ax * 4 * w.earL - ax * 10 * (w.bunL + w.bunR);
-    p[1] -= ay * (6 * w.nose + 3 * w.mouth);
+    p[0] += ax * FACE * (8 * w.nose + 5 * w.mouth) + (x - rig.face.eyeA.cx) * 0.12 * ax * w.eyeA - (x - rig.face.eyeB.cx) * 0.12 * ax * w.eyeB
+      - ax * FACE * 9 * w.earR + ax * FACE * 4 * w.earL - ax * FACE * 10 * (w.bunL + w.bunR);
+    p[1] -= ay * FACE * (6 * w.nose + 3 * w.mouth);
     p[1] += (y - rig.face.eyeA.cy) * -0.06 * Math.abs(ay) * w.eyeA + (y - rig.face.eyeB.cy) * -0.06 * Math.abs(ay) * w.eyeB;
-    applyHead(p, w.head, P, w.turn);
-    applyBody(p, y, P, w.chest, w.breath, w.shoulder);
+    if (CUT) {
+      // the cut base holds only the torso, head and clothes: limbs are their own parts
+      applyHead(p, w.head, P, w.turn);
+      applyCutBody(p, y, P, w.chest, w.breath, w.shoulder);
+    } else {
+      const limbs = P.skeletonAngles ? w.skeletonLimbs : w.limbs;
+      if (limbs?.length) applyLimbs(p, limbs, P, phys);
+      applyHead(p, w.head, P, w.turn);
+      applyBody(p, y, P, w.chest, w.breath, w.shoulder);
+    }
+    // Whole-body shift from hip tracking and foot contact. A zero shift is skipped,
+    // and a bust has no full-body rig, so this cannot change the bust regression.
+    const shift = FULL ? P.skeletonTranslation : null;
+    if (shift && (shift[0] || shift[1])) { p[0] += shift[0]; p[1] += shift[1]; }
     return p;
+  }
+
+  // ---- cut-out parts ----
+  // A limb part moves as one rigid piece: the rotations of its chain about the drawn joints,
+  // then where the cut base carries its root. An arm takes the torso's local motion at the
+  // shoulder (breath, roll, lean, head weight) plus its own depth in a body yaw. A leg only
+  // follows the hip's travel: it passes under the skirt and its foot stays planted.
+  const rootCache = new Map();
+  function rootPoints(root) {
+    let hit = rootCache.get(root);
+    if (!hit) {
+      const bone = boneOf(root);
+      const [px, py] = bone.pivot;
+      const ux = bone.tip[0] - px, uy = bone.tip[1] - py, len = Math.hypot(ux, uy) || 1;
+      const reach = Math.min(24, len * 0.5);
+      const q = [px + ux / len * reach, py + uy / len * reach];
+      hit = { p: [px, py], q, wp: baseWeights(px, py, 0), wq: baseWeights(q[0], q[1], 0) };
+      rootCache.set(root, hit);
+    }
+    return hit;
+  }
+  const rootA = [0, 0], rootB = [0, 0];
+  function partFrame(name, P, phys) {
+    let c = 1, s = 0, tx = 0, ty = 0, root = name;
+    for (let n = name; n && CUT_LIMBS.has(n); n = parentOf(n, P)) {
+      root = n;
+      const a = localAngle(n, P, phys);
+      if (!a) continue;
+      const [px, py] = boneOf(n).pivot;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const nc = ca * c - sa * s, ns = sa * c + ca * s;
+      const ntx = ca * (tx - px) - sa * (ty - py) + px, nty = sa * (tx - px) + ca * (ty - py) + py;
+      c = nc; s = ns; tx = ntx; ty = nty;
+    }
+    const at = rootPoints(root);
+    deformBase(at.p[0], at.p[1], at.wp, P, phys, rootA);
+    const arm = root.startsWith('upperArm');
+    let fc = 1, fs = 0, ox = rootA[0], oy = rootA[1];
+    if (arm) {
+      deformBase(at.q[0], at.q[1], at.wq, P, phys, rootB);
+      const turn = Math.atan2(rootB[1] - rootA[1], rootB[0] - rootA[0]) - Math.atan2(at.q[1] - at.p[1], at.q[0] - at.p[0]);
+      fc = Math.cos(turn); fs = Math.sin(turn);
+      const front = frontSide(P);
+      if (front) ox += yawShift(P, front === root[root.length - 1] ? 'front' : 'back') - yawShift(P, 'torso');
+    } else {
+      ox -= yawShift(P, 'torso');
+    }
+    const [px, py] = at.p;
+    return {
+      c: fc * c - fs * s, s: fs * c + fc * s,
+      tx: fc * (tx - px) - fs * (ty - py) + ox, ty: fs * (tx - px) + fc * (ty - py) + oy,
+    };
   }
 
   // ---- hand / forearm ----
@@ -295,5 +616,5 @@ export function createRig(rig) {
     const w = baseWeights(t.pivot[0], t.pivot[1]);
     return deformBase(t.pivot[0], t.pivot[1], w, P, phys, out);
   }
-  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
+  return { IMG, EYES, MOUTH, CHEEKS, STRANDS, TASSELS, cutout: CUT, headWeight, turnWeight, baseWeights, deformBase, applyHead, applyBody, applyTorso, applyLimbs, partFrame, frontSide, handWeights, handFrame, deformHand, eyePartY, eyePartAlpha, tasselAnchor };
 }

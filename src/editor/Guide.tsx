@@ -17,7 +17,7 @@ export function Help({ onClose, onGuide }: { onClose: () => void; onGuide: () =>
     <div className="panel-title"><h2>{t.help}</h2><button autoFocus className="icon-button" aria-label={t.close} onClick={onClose}><Icon name="close" /></button></div>
     <div className="help-body"><GuideSteps /><h3>{t.shortcuts}</h3><dl>
       {[[t.shortcutUndo, '⌘Z / ⇧⌘Z'], [t.shortcutSave, '⌘S'], [t.shortcutPan, t.spaceDrag],
-        [t.shortcutZoom, `${t.wheel} · ⌘+/⌘−/⌘0/⌘1`], [t.shortcutVertex, t.vertexKeys]].map(([label, keys]) =>
+        [t.shortcutZoom, `${t.wheel} · ⌘+/⌘−/⌘0/⌘1`], [t.shortcutVertex, t.vertexKeys], [t.shortcutNudge, t.nudgeKeys]].map(([label, keys]) =>
         <div key={label}><dt>{label}</dt><dd>{keys}</dd></div>)}
     </dl><button onClick={onGuide}>{t.guideAgain}</button></div>
   </section>;

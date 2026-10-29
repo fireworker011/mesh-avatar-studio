@@ -56,12 +56,19 @@ const SPRINGS = {
   angleX: [55, 0.72], angleY: [55, 0.72], angleZ: [45, 0.75],
   bodyAngleX: [14, 0.9], bodyAngleZ: [12, 0.9],
   armAngle: [20, 0.85], handAngle: [30, 0.8],
+  torsoBend: [10, 0.85], hipSway: [8, 0.9],
+  armL: [12, 0.8], armR: [12, 0.8], forearmL: [16, 0.8], forearmR: [16, 0.8],
+  wristL: [22, 0.8], wristR: [22, 0.8],
+  thighL: [10, 0.88], thighR: [10, 0.88], shinL: [14, 0.88], shinR: [14, 0.88],
+  footL: [18, 0.85], footR: [18, 0.85],
 };
 
 export class Motion {
   /** @param {number[]} gazeCenter */
-  constructor(gazeCenter) {
+  constructor(gazeCenter, options = {}) {
     this.mode = 'auto';           // auto | mouse | manual
+    this.fullBody = !!options.fullBody;
+    this.sway = Math.min(1, Math.max(0, Number(options.sway) || 0));
     this.P = Object.fromEntries(PARAMS.map(p => [p.id, p.def]));
     this.manual = { ...this.P };
     this.cur = { ...this.P };      // smoothed values
@@ -86,6 +93,7 @@ export class Motion {
     this.voiceTrough = 0;
     this.kana = null;
     this.lipHold = null;
+    this.viseme = null;            // microphone vowel, or 'm' while the lips are closed
     this.emotionUntil = 0;         // when the emotion face goes back to normal
     this.talkGain = 1;             // how much the head moves along with the voice
     this.play = null;              // { id, t } of the motion being played
@@ -130,13 +138,18 @@ export class Motion {
     this.kana = moras.length ? { moras, t: 0, loop, duration: moras.reduce((sum, m) => sum + m.dur, 0) } : null;
   }
 
+  /** `a` `i` `u` `e` `o`, `m` for a bilabial close, or null to leave the mouth alone. */
+  setViseme(vowel) {
+    this.viseme = vowel === 'm' || Object.hasOwn(VOWELS, vowel) ? vowel : null;
+  }
+
   holdMouth(vowel) {
     this.kana = null;
     this.lipHold = Object.hasOwn(VOWELS, vowel) ? vowel : null;
   }
 
   stopLipSync() {
-    this.kana = null; this.lipHold = null; this.lipOpen = null; this.mouth = 0;
+    this.kana = null; this.lipHold = null; this.viseme = null; this.lipOpen = null; this.mouth = 0;
   }
 
   getLipSyncState() {
@@ -162,6 +175,21 @@ export class Motion {
       const k = m.open > this.mouth ? 1 - Math.exp(-dt * 30) : 1 - Math.exp(-dt * 22);
       this.mouth += (m.open - this.mouth) * k;
       if (m.form !== null) this.vowelForm = m.form;
+      return [this.mouth, this.vowelForm];
+    }
+    // A detected vowel owns the mouth. A bilabial stays nearly shut and keeps the last shape.
+    // Quiet speech still opens far enough for the drawn vowel to show.
+    if (this.viseme && this.speaking) {
+      const closed = this.viseme === 'm';
+      const name = closed ? (this.vowel || 'a') : this.viseme;
+      const shape = VOWELS[name] ?? VOWELS.a;
+      if (!closed) this.vowel = name;
+      const level = Math.min(1, Math.pow(Math.max(0, this.voice), 0.7) * 1.15);
+      const shaped = 0.45 + 0.55 * shape.open / 0.9;
+      const target = closed ? 0.02 : Math.min(0.95, Math.max(level, 0.62)) * shaped;
+      const rate = target > this.mouth ? 1 - Math.exp(-dt * 40) : 1 - Math.exp(-dt * 32);
+      this.mouth += (target - this.mouth) * rate;
+      if (!closed && shape.form !== null) this.vowelForm = shape.form;
       return [this.mouth, this.vowelForm];
     }
     const v = this.speaking ? this.voice : 0;
@@ -241,6 +269,17 @@ export class Motion {
       T.bodyAngleZ = fbm(t * 0.09, 5) * 4;
       T.armAngle = fbm(t * 0.14, 6) * 5;
       T.handAngle = fbm(t * 0.21, 7) * 5;
+      if (this.fullBody) {
+        const s = this.sway;
+        T.hipSway = Math.sin(t * 0.75) * s;
+        T.torsoBend = Math.sin(t * 0.75 + 0.5) * s * 0.65;
+        T.armL = Math.sin(t * 0.9) * s;
+        T.armR = Math.sin(t * 0.9 + 0.8) * s;
+        T.forearmL = Math.sin(t * 1.15 + 0.4) * s * 0.55;
+        T.forearmR = Math.sin(t * 1.15 + 1.1) * s * 0.55;
+        T.thighL = Math.sin(t * 0.7) * s * 0.45;
+        T.thighR = -Math.sin(t * 0.7) * s * 0.45;
+      }
       // glances
       if (t > this.gaze.next) {
         const r = Math.random();

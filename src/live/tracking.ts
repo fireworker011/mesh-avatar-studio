@@ -5,6 +5,10 @@ export interface FaceResult {
   faceLandmarks: unknown[][];
   faceBlendshapes: { categories: { categoryName: string; score: number }[] }[];
   facialTransformationMatrixes: { data: number[] }[];
+  /** MediaPipe pose rows `[x, y, z, visibility]`, normalized to the camera frame. Empty when the body was not found. */
+  poseLandmarks?: number[][];
+  /** MediaPipe hands. `Left` / `Right` are the person's own sides. */
+  hands?: { side: string; landmarks: number[][] }[];
 }
 export interface RawFace { yaw: number; pitch: number; roll: number; shapes: Record<string, number> }
 export interface TrackingOptions { mirror: boolean; sensitivity: number; smoothing: number }

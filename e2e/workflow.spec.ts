@@ -123,10 +123,19 @@ test('empty workspace offers folder actions and a single prompt copy without a v
   await expect(card.getByRole('button', { name: 'Copy folder path', exact: true })).toBeVisible();
   await expect(card.getByRole('button', { name: 'Open folder', exact: true })).toBeVisible();
   await card.getByRole('button', { name: 'Copy message', exact: true }).click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('projects/my-avatar');
+  const copied = () => page.evaluate(() => navigator.clipboard.readText());
+  expect(await copied()).toContain('projects/my-avatar');
+  expect(await copied()).not.toContain('--full-body');
+  await expect(card.getByRole('button', { name: 'Bust', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(card.getByRole('button', { name: '✓ Copied', exact: true })).toHaveAttribute('aria-live', 'polite');
   await expect(card.getByRole('button', { name: 'Copy message', exact: true })).toBeVisible({ timeout: 5000 });
-  await expect(card.getByRole('button')).toHaveCount(3); await expect(card.locator('ol')).toHaveCount(0);
+  await card.getByRole('button', { name: 'Full body', exact: true }).click();
+  await expect(card.getByRole('button', { name: 'Full body', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await card.getByRole('button', { name: 'Copy message', exact: true }).click();
+  expect(await copied()).toContain('--full-body');
+  expect(await copied()).toContain('projects/my-avatar');
+  await expect(card.getByRole('button', { name: 'Copy message', exact: true })).toBeVisible({ timeout: 5000 });
+  await expect(card.getByRole('button')).toHaveCount(5); await expect(card.locator('ol')).toHaveCount(0);
   await expect(card.getByRole('button', { name: 'Reload project', exact: true })).toHaveCount(0);
 });
 test('eye and mouth checkboxes immediately adapt the prompt and lip fallback opens the mouth request', async ({ page }) => {

@@ -6,11 +6,14 @@ import type { Plugin } from 'vite';
 export function mediapipeAssets(root: string, prefix = '/'): Plugin {
   const files = new Map([
     ['tracking-worker.js', resolve(root, 'src/live/tracking-worker.js')],
+    ['pose-worker.js', resolve(root, 'src/editor/pose-worker.js')],
     // Served as .js: static hosts can label .cjs as application/node, which importScripts rejects.
     ['vision_bundle.js', resolve(root, 'node_modules/@mediapipe/tasks-vision/vision_bundle.cjs')],
     ...['vision_wasm_internal.js', 'vision_wasm_internal.wasm', 'vision_wasm_nosimd_internal.js', 'vision_wasm_nosimd_internal.wasm']
       .map(name => [name, resolve(root, 'node_modules/@mediapipe/tasks-vision/wasm', name)] as const),
     ['face_landmarker.task', resolve(root, 'vendor/mediapipe/face_landmarker.task')],
+    ['pose_landmarker_lite.task', resolve(root, 'vendor/mediapipe/pose_landmarker_lite.task')],
+    ['hand_landmarker.task', resolve(root, 'vendor/mediapipe/hand_landmarker.task')],
     ['LICENSE', resolve(root, 'vendor/mediapipe/LICENSE')],
     ['README.md', resolve(root, 'vendor/mediapipe/README.md')],
   ]);

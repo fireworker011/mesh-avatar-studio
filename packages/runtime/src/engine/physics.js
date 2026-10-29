@@ -1,7 +1,54 @@
+import { FULL_BODY_BONES } from '../rig/bones.js';
+
+/** Depth inside an ellipse, in pixels. 0 when the point is outside. */
+function ellipseDepth(px, py, shape) {
+  const rx = shape.rx || 1, ry = shape.ry || 1;
+  const r = Math.hypot((px - shape.cx) / rx, (py - shape.cy) / ry);
+  return r >= 1 ? 0 : (1 - r) * Math.min(rx, ry);
+}
+
+/**
+ * Keep a strand point from resting deeper inside the head, shoulder or chest
+ * ellipses than it was drawn. Does not move those shapes' pixels. A bust has
+ * no shapes passed in and is unchanged.
+ * @param {number[]} point
+ * @param {number[]} rest
+ * @param {{ cx: number, cy: number, rx: number, ry: number }[]} shapes
+ */
+export function limitStrandDepth(point, rest, shapes) {
+  let x = point[0], y = point[1];
+  for (const shape of shapes) {
+    if (!shape?.rx || !shape?.ry) continue;
+    const restDepth = ellipseDepth(rest[0], rest[1], shape);
+    let depth = ellipseDepth(x, y, shape);
+    if (depth <= restDepth + 1e-4) continue;
+    for (let n = 0; n < 12 && depth > restDepth; n++) {
+      let gx = (x - shape.cx) / (shape.rx * shape.rx);
+      let gy = (y - shape.cy) / (shape.ry * shape.ry);
+      let glen = Math.hypot(gx, gy);
+      if (glen < 1e-8) {
+        gx = rest[0] - shape.cx;
+        gy = rest[1] - shape.cy;
+        glen = Math.hypot(gx, gy) || 1;
+      }
+      const before = depth;
+      const step = Math.max(0.25, depth - restDepth);
+      x += gx / glen * step;
+      y += gy / glen * step;
+      depth = ellipseDepth(x, y, shape);
+      if (depth >= before - 1e-4) break;
+    }
+  }
+  return [x, y];
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createPhysics(engine, rig) {
-  const { applyHead, applyBody, TASSELS, tasselAnchor } = engine;
+  const { applyHead, applyBody, applyTorso, applyLimbs, baseWeights, TASSELS, tasselAnchor } = engine;
+  const CUT = !!engine.cutout;
+  const FULL = rig.fullBody ?? null;
+  const ARM_BONES = FULL_BODY_BONES.filter(bone => bone.param === 'armL' || bone.param === 'armR' || bone.param.startsWith('forearm') || bone.param.startsWith('wrist'));
   const STRANDS = (rig.strands ?? []).map(strand => {
     if (strand.nodes.length === 4) return strand;
     const nodes = Array.from({ length: 4 }, (_, i) => {
@@ -36,6 +83,9 @@ export function createPhysics(engine, rig) {
   const softLimit = (v, m) => { const l = Math.hypot(v[0], v[1]); if (l < 1e-6) return v; const k = m * Math.tanh(l / m) / l; return [v[0] * k, v[1] * k]; };
 
   const HAIR = Object.fromEntries(Object.entries(rig.buns ?? {}).map(([key, area]) => [key, { at: [area.cx, area.cy], k: 260, c: 11, hang: 3, max: 4 }]));
+  // Full body only. Bust physics never consults these, so the regression path
+  // does not mix the limit in and then cancel it. Chest pixels are not pushed.
+  const BODY_SHAPES = FULL ? [rig.head, rig.body?.chest, ...(rig.body?.shoulders ?? [])].filter(shape => shape?.rx && shape?.ry) : null;
 
   const clampLen = (v, m) => { const l = Math.hypot(v[0], v[1]); if (l > m) { v[0] *= m / l; v[1] *= m / l; } };
 
@@ -60,6 +110,19 @@ export function createPhysics(engine, rig) {
 
     hairAnchor(at, P) {
       const p = [at[0], at[1]];
+      // Bust anchors stay head + body, which is what the physics regression measures.
+      // A full-body strand over the torso uses the same limb weights as the mesh; with
+      // cut-out limbs the torso is never skinned to a limb, and neither is its hair.
+      if (CUT) {
+        applyHead(p, 1, P);
+        applyTorso(p, at[1], P);
+        return p;
+      }
+      if (FULL) {
+        const weights = baseWeights(at[0], at[1], 0);
+        const limbs = P.skeletonAngles ? weights.skeletonLimbs : weights.limbs;
+        if (limbs?.length) applyLimbs(p, limbs, P, this.out);
+      }
       applyHead(p, 1, P);
       applyBody(p, at[1], P);
       return p;
@@ -96,7 +159,16 @@ export function createPhysics(engine, rig) {
         }
         for (let j = 0; j < 4; j++) {
           const o = [st.p[j][0] - target[j][0], st.p[j][1] - target[j][1]];
-          out[j] = softLimit(o, Math.max(0.5, cfg.max * HAIR_TUNE.reach * Math.max(1, g) * j / 3));
+          const limited = softLimit(o, Math.max(0.5, cfg.max * HAIR_TUNE.reach * Math.max(1, g) * j / 3));
+          if (BODY_SHAPES) {
+            const rest = cfg.nodes[j];
+            const held = limitStrandDepth([rest[0] + limited[0], rest[1] + limited[1]], rest, BODY_SHAPES);
+            limited[0] = held[0] - rest[0];
+            limited[1] = held[1] - rest[1];
+            st.p[j][0] = target[j][0] + limited[0];
+            st.p[j][1] = target[j][1] + limited[1];
+          }
+          out[j] = limited;
         }
       });
 
@@ -129,6 +201,22 @@ export function createPhysics(engine, rig) {
           const l = snap[Math.max(0, i - 1)], r = snap[Math.min(FRINGE - 1, i + 1)];
           for (const a of [0, 1]) O[i][j][a] = snap[i][a] * 0.5 + (l[a] + r[a]) * 0.25;
         }
+      }
+      // Neighbour smoothing can push a fringe strand back into the head. Clamp
+      // again after it. Bust has no shapes, so this does not run there.
+      if (BODY_SHAPES) {
+        STRANDS.forEach((cfg, si) => {
+          const out = O[si], st = this.strands[si];
+          for (let j = 0; j < 4; j++) {
+            const rest = cfg.nodes[j];
+            const held = limitStrandDepth([rest[0] + out[j][0], rest[1] + out[j][1]], rest, BODY_SHAPES);
+            const nx = held[0] - rest[0], ny = held[1] - rest[1];
+            st.p[j][0] += nx - out[j][0];
+            st.p[j][1] += ny - out[j][1];
+            out[j][0] = nx;
+            out[j][1] = ny;
+          }
+        });
       }
 
       // Tassels: a two-joint angular pendulum. The old verlet chain was pulled back to its
@@ -167,6 +255,32 @@ export function createPhysics(engine, rig) {
         const p1 = [A[0] + d1[0] * ch.L1, A[1] + d1[1] * ch.L1];
         ch.pts = [[...A], p1, [p1[0] + d2[0] * ch.L2, p1[1] + d2[1] * ch.L2]];
         ch.anchor = A;
+      }
+      if (FULL) {
+        if (!this.limbState) {
+          this.limbState = Object.fromEntries(ARM_BONES.map(bone => [bone.name, { th: 0, w: 0 }]));
+          this.out.limbs = {};
+        }
+        const follow = FULL.armFollow;
+        for (const bone of ARM_BONES) {
+          const st = this.limbState[bone.name];
+          const level = bone.name.startsWith('upper') ? 0 : bone.name.startsWith('lower') ? 1 : 2;
+          const parent = bone.parent ? this.limbState[bone.parent] : null;
+          const side = bone.name.endsWith('L') ? 1 : -1;
+          const phase = bone.name.endsWith('L') ? 0.4 : 1.7;
+          // Upper arms counter body roll; the forearm and hand lag behind that swing.
+          const followTarget = level === 0 || !parent
+            ? side * (-P.bodyAngleZ / 10) * follow * 0.25
+            : parent.th * 0.65;
+          const target = followTarget
+            + Math.sin(this.time * (1.2 + level * 0.35) + phase) * FULL.sway * (0.04 + level * 0.02);
+          const w0 = 2 * Math.PI * [1.15, 1.7, 2.3][level] / Math.sqrt(Math.max(0.4, g));
+          const step = Math.min(dt, 0.05);
+          st.w += (-w0 * w0 * (st.th - target) - 2 * 0.75 * w0 * st.w) * step;
+          st.th += st.w * step;
+          st.th = Math.max(-0.45, Math.min(0.45, st.th));
+          this.out.limbs[bone.name] = st.th;
+        }
       }
       this.time += dt;
       return this.out;

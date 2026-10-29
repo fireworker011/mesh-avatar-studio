@@ -3,10 +3,92 @@ import { DEFAULT_LIGHTING, parseLighting } from '../lighting/settings';
 import { TERMINATOR, DETAIL_SCALE, SHADOW_SATURATION, MAX_IRRADIANCE, headRotation } from '../lighting/shading';
 import { DropShadow } from '../lighting/shadow';
 
+// A bust eye is about 95px across: 14 base cells (fine cell 7), 32 lash cells (eye cell 3),
+// 24 iris cells (ball cell 4) and 24 sprite cells. A full-body face is a small part of the
+// picture, so the same pixel cell leaves only a few quads across that eye.
+const BUST_CELLS = { base: 14, lash: 32, ball: 24, sprite: 24 };
+// The bust sample's eye is about 95px wide. Mouth height, blush, gaze and the extra
+// brow/feature offsets were chosen in those pixels.
+const BUST_EYE = 95;
+
+function featureSpan(points) {
+  if (!points?.length) return 0;
+  let min = Infinity, max = -Infinity;
+  for (const point of points) {
+    if (point[0] < min) min = point[0];
+    if (point[0] > max) max = point[0];
+  }
+  return max - min;
+}
+
+function densityCell(span, across, configured) {
+  if (!(span > 4)) return configured;
+  const needed = span / across;
+  // Already as fine as a bust face of this size. Bust rigs never reach this helper.
+  if (needed >= configured * 0.9) return configured;
+  return Math.max(0.5, needed);
+}
+
+/**
+ * Extra face grid for a full-body rig whose eyes are small in the picture.
+ * Bust rigs, and a full-body face that is already bust-sized, get no change.
+ * @param {import('../rig/types').Rig} rig
+ */
+export function faceDensity(rig) {
+  const configured = {
+    fine: rig.mesh.fine?.cell ?? rig.mesh.baseCell,
+    eye: rig.mesh.eyeCell,
+    ball: rig.mesh.eyeBallCell,
+    sprite: rig.mesh.spriteCell,
+  };
+  if (!rig.fullBody) return { region: null, eyeCell: configured.eye, ballCell: configured.ball, spriteCell: configured.sprite, scale: 1 };
+  let span = 0;
+  for (const eye of rig.eyes ?? []) {
+    const width = featureSpan(eye.opening);
+    if (width > 4) span = span ? Math.min(span, width) : width;
+  }
+  if (!span && rig.mouth?.halfLen > 2) span = rig.mouth.halfLen * 2;
+  const fineCell = densityCell(span, BUST_CELLS.base, configured.fine);
+  const fine = rig.mesh.fine;
+  const region = fine && fineCell < configured.fine
+    ? { x0: fine.x0, x1: fine.x1, y0: fine.y0, y1: fine.y1, cell: fineCell }
+    : null;
+  // A bust-sized eye keeps the authored pixel distances. A smaller full-body eye
+  // shrinks them so a blink-sized move stays a blink, not a shove across the face.
+  const scale = span > 4 && span / BUST_EYE < 0.9 ? span / BUST_EYE : 1;
+  return {
+    region,
+    eyeCell: densityCell(span, BUST_CELLS.lash, configured.eye),
+    ballCell: densityCell(span, BUST_CELLS.ball, configured.ball),
+    spriteCell: densityCell(span, BUST_CELLS.sprite, configured.sprite),
+    scale,
+  };
+}
+
+// How far a procedural mouth may extend, in source px from the mouth centre.
+// Down stops inside the jaw ellipse. Up stops short of the nose.
+function mouthFit(rig) {
+  const mouth = rig.mouth;
+  if (!mouth) return [8, 4];
+  const jaw = rig.face?.jaw;
+  const nose = rig.face?.nose;
+  const jawBottom = jaw
+    ? Math.min(jaw.cy + jaw.ry, Array.isArray(jaw.band) ? jaw.band[1] : jaw.cy + jaw.ry)
+    : mouth.cy + mouth.halfLen * 2;
+  const down = Math.max(mouth.halfLen * 0.5, jawBottom - mouth.cy - 0.5);
+  const noseBottom = nose ? nose.cy + nose.ry * 0.5 : mouth.cy - mouth.halfLen;
+  const up = Math.max(mouth.halfLen * 0.25, mouth.cy - noseBottom - 0.3);
+  return [down, up];
+}
+
 /** @param {ReturnType<import('./rig.js').createRig>} engine
  * @param {import('../rig/types').Rig} rig */
 export function createRenderer(engine, rig) {
   const { IMG, EYES, MOUTH, CHEEKS } = engine;
+  // the eyelid mask stops short of the brow; without a brow it keeps to just above the opening
+  const browY = rig.face?.brow?.cy ?? 1e4;
+  const faceScale = faceDensity(rig).scale;
+  const [mouthDown, mouthUp] = mouthFit(rig);
   // WebGL2 renderer: textured grid meshes whose vertices are deformed on the CPU,
   // plus a fragment-shader pass for eyelids, eye balls, mouth and blush on the base layer.
 
@@ -24,7 +106,7 @@ export function createRenderer(engine, rig) {
   uniform vec4 uRect;        // layer rect in source px
   uniform int uFace;
   uniform float uAlpha;
-  uniform vec4 uEyeBox[2];   // x0, x1, -, -
+  uniform vec4 uEyeBox[2];   // x0, x1, brow centre y (face.brow.cy), -
   uniform float uEyeTop[48]; // 2 eyes x EYE_N samples
   uniform float uEyeBot[48];
   uniform vec4 uEyeState[2]; // open, smile, ballX(px), ballY(px)
@@ -32,6 +114,8 @@ export function createRenderer(engine, rig) {
   uniform vec4 uMouthState;  // open, form, bow, -
   uniform vec4 uCheeks;      // x0, y0, x1, y1
   uniform float uCheek;
+  uniform float uFaceScale; // 1 on a bust; smaller when a full-body eye is a small part of the picture
+  uniform vec2 uMouthFit;   // max t below the mouth centre, max -t above it, source px
 
   const int EYE_N = 24;
   float crv(int e, bool top, float u) {
@@ -45,6 +129,17 @@ export function createRenderer(engine, rig) {
   // Upper lid line and lower lid line of eye e at column u, for the current open/smile state.
   // Must match eyeLids() in rig.js, which moves the lash meshes to the same lines.
   // Must match eyeLidsRaw() / eyeLids() in rig.js.
+  // How far down the lid has slid, as a share of the opening, for b = 1 - open: open 0.5 shows
+  // a little over half the iris, 0.35 about half, and the steps 0.15 / 0.35 / 0.5 / 0.7 / 1
+  // open about evenly, and from 0.35 to 0.5 the lid rises in even steps (no flat spot);
+  // 0 and 1 are where they were. Must match exprEyeOpen() in
+  // createMeshAvatar.js.
+  float lidSlide(float b) {
+    b = clamp(b, 0.0, 1.0);
+    float g = 0.688 * smoothstep(0.25, 0.59, b) + 0.193 * smoothstep(0.419, 0.64, b) + 0.119 * smoothstep(0.576, 0.669, b);
+    return b * b * (0.73 + 0.86 * (1.0 - g)) + 0.27 * pow(b, 12.0);
+  }
+
   vec2 eyeLidsRaw(int e, float u) {
     u = clamp(u, 0.0, 1.0);
     vec4 st = uEyeState[e];
@@ -53,7 +148,16 @@ export function createRenderer(engine, rig) {
     float H = crv(e, false, 0.5) - crv(e, true, 0.5);
     float arc = mix(uEyeTop[e * EYE_N], uEyeTop[e * EYE_N + EYE_N - 1], u) - 0.3 * H * hump;
     float closed = max(top, bot + 1.0 + (arc - bot - 1.0) * smile);
-    return vec2((closed - top) * max(b, -0.07), b > 0.0 ? (closed - bot) * b * smile : 0.0);
+    // closing, the lid slides down as a whole and keeps the arch of the opening's top line
+    // (blending top into bottom flattened it into a stiff straight cut); near the corners
+    // it meets the lower line sooner and rests there
+    float slide = (H + 1.0) * lidSlide(b), rest = closed - top;
+    // a soft meeting, so the lash does not hook down where the lid reaches the corner;
+    // it turns hard as the eye shuts, so the closed line is where it was
+    float km = 3.0 * (1.0 - clamp(b, 0.0, 1.0)) + 1e-4;
+    float hm = clamp(0.5 + 0.5 * (rest - slide) / km, 0.0, 1.0);
+    float dn = b > 0.0 ? max(0.0, mix(rest, slide, hm) - km * hm * (1.0 - hm)) : rest * max(b, -0.07);
+    return vec2(dn, b > 0.0 ? (closed - bot) * b * smile : 0.0);
   }
 
   vec2 eyeLids(int e, float u, float top, float bot) {
@@ -83,6 +187,122 @@ export function createRenderer(engine, rig) {
     return c * smoothstep(lids.x - 1.0, lids.x + 0.5, p.y) * (1.0 - smoothstep(lids.y - 0.9, lids.y + 0.6, p.y));
   }
 
+  vec3 mouthLip(vec2 d, vec2 n) {
+    vec3 best = vec3(0.46, 0.12, 0.14);
+    float bestS = 0.18;
+    for (int i = -4; i <= 4; i++) {
+      vec3 c = texAt(uMouth.xy + n * float(i) * 0.55 + d * float(i) * 0.35).rgb;
+      float mx = max(c.r, max(c.g, c.b));
+      float mn = min(c.r, min(c.g, c.b));
+      float score = (mx - mn) + c.r * 0.35 - c.b * 0.15;
+      if (score > bestS) { bestS = score; best = c; }
+    }
+    return best;
+  }
+
+  vec3 mouthSkin(vec2 d, vec2 n) {
+    vec3 best = vec3(0.87, 0.72, 0.66);
+    float bestS = 0.0;
+    vec2 q0 = uMouth.xy - d * uMouth.w * 1.85;
+    vec2 q1 = uMouth.xy + d * uMouth.w * 1.85;
+    vec2 q2 = uMouth.xy - d * uMouth.w * 1.35 - n * uMouth.w * 0.55;
+    vec2 q3 = uMouth.xy + d * uMouth.w * 1.35 - n * uMouth.w * 0.55;
+    for (int i = 0; i < 4; i++) {
+      vec2 q = i == 0 ? q0 : i == 1 ? q1 : i == 2 ? q2 : q3;
+      vec3 c = texAt(q).rgb;
+      float luma = dot(c, vec3(0.22, 0.68, 0.10));
+      float mx = max(c.r, max(c.g, c.b));
+      float mn = min(c.r, min(c.g, c.b));
+      // the face's own warm tone wins over a grey patch; lips stay out by their place, not their tint
+      float score = luma - (mx - mn) * 0.4;
+      if (luma > 0.30 && luma < 0.96 && score > bestS) { bestS = score; best = c; }
+    }
+    return best;
+  }
+
+  // A full-body face keeps the bust aperture in mouth-length units, not in bust
+  // pixels. Scaling 20px by a 6px eye collapses the hole inside its own feather.
+  // Lip and skin colours come from the picture. The edge is about one screen pixel,
+  // so a zoomed face redraws the mouth sharply instead of enlarging source texels.
+  vec4 mouthVector(vec4 base, vec2 p, vec2 d, vec2 n, float open, float s, float t, float form, float aa) {
+    float unit = max(uMouth.w, 1.0);
+    float down = max(uMouthFit.x, unit * 0.45);
+    float upFit = max(uMouthFit.y, unit * 0.2);
+    float wf = mix(0.96, form < 0.0 ? 1.08 : 0.58, abs(form));
+    float k = 1.0 - (s / wf) * (s / wf);
+    float line = uMouthState.z * (1.0 - clamp(s * s, 0.0, 1.0));
+    float hk = k > 0.0 ? pow(k, mix(0.5, form < 0.0 ? 0.45 : 0.6, abs(form))) : 0.0;
+    float rad = length(vec2(s / 1.30, (t - line * 0.25) / (unit * 0.95)));
+    if (rad > 1.35 && abs(s) > wf + 0.25) return base;
+
+    float openAmt = clamp(open, 0.0, 1.0);
+    // the opening stays near the drawn lips' size: a full gap of a mouth length looked pasted on
+    float tall = mix(0.8, form < 0.0 ? 0.5 : 0.95, abs(form));
+    float gapH = min(unit * tall, down * 0.74);
+    float lipUpT = min(unit * 0.28, upFit * 0.5);
+    float lipLoT = min(unit * 0.36, down * 0.22);
+    float rise = min(unit * (0.04 + openAmt * 0.24 * hk), upFit * 0.7);
+    float up = line - rise;
+    float lo = min(line + openAmt * gapH * hk, down - lipLoT * 0.35);
+    float pinch = mix(0.22, 1.0, hk);
+    float loLip = min(lo + lipLoT * pinch, down);
+    float upLip = max(up - lipUpT * pinch, -upFit);
+
+    // The drawn lips themselves part: above the gap the picture is squeezed up from the
+    // lip line to a point over the upper lip, below it down to a point under the lower lip,
+    // so the lips keep their own pixels instead of being repainted. The squeeze reaches a
+    // little past the corners and eases off there, so a round mouth's lips stay joined to
+    // the unmoved lips beside it; the lower half starts just under the line, so the line's
+    // pale seam is not pulled up to the gap's lower edge.
+    float wM = max(wf * 1.35, wf + 0.3);
+    float kM = clamp(1.0 - (s / wM) * (s / wM), 0.0, 1.0);
+    float hM = max(hk, 0.6 * pow(kM, 1.5));
+    float upM = min(up, line - min(unit * (0.04 + openAmt * 0.24 * hM), upFit * 0.7));
+    float loM = max(lo, min(line + openAmt * gapH * hM, down - lipLoT * 0.35));
+    float topA = -upFit - unit * 0.3, botB = down + unit * 0.2;
+    float seam = min(unit * 0.08, (botB - line) * 0.2);
+    float tt = t;
+    if (t < upM) tt = topA + (t - topA) * (line - topA) / max(upM - topA, aa);
+    else if (t > loM) tt = line + seam + (t - loM) * (botB - line - seam) / max(botB - loM, aa);
+    // in the gap's own soft edge the picture there would be the skin under the lips, which
+    // showed as a pale rim; it shows the lip line's own pixels instead
+    else tt = t > 0.5 * (upM + loM) ? line + seam : line;
+    tt = t < topA || t > botB ? t : tt;
+    vec4 c = texAt(p + n * (tt - t));
+    // a picture whose mouth is only a drawn line has no lips to move apart: where the moved
+    // pixels are still skin-coloured the lips are painted in, as before
+    vec3 skin = mouthSkin(d, n);
+    vec3 lip = mouthLip(d, n);
+    vec3 ls = lip - skin;
+    float lipness = clamp(dot(c.rgb - skin, ls) / max(dot(ls, ls), 1e-4), 0.0, 1.0);
+    float side = 1.0 - smoothstep(wf * 0.88, wf * 1.06, abs(s));
+    float lower = smoothstep(lo - aa, lo + aa, t) * (1.0 - smoothstep(loLip - aa, loLip + aa, t)) * side;
+    float upper = smoothstep(upLip - aa, upLip + aa, t) * (1.0 - smoothstep(up - aa, up + aa, t)) * side;
+    float loMid = clamp((t - lo) / max(loLip - lo, aa), 0.0, 1.0);
+    float upMid = clamp((up - t) / max(up - upLip, aa), 0.0, 1.0);
+    vec3 loCol = mix(lip * vec3(0.75, 0.6, 0.62), mix(lip, skin, 0.22), smoothstep(0.1, 0.7, loMid));
+    vec3 upCol = mix(lip * vec3(0.7, 0.55, 0.57), lip, smoothstep(0.15, 0.85, upMid));
+    float paint = (1.0 - smoothstep(0.35, 0.75, lipness)) * smoothstep(0.04, 0.20, openAmt);
+    c.rgb = mix(c.rgb, loCol, clamp(lower * paint, 0.0, 1.0));
+    c.rgb = mix(c.rgb, upCol, clamp(upper * paint, 0.0, 1.0));
+
+    float gap = 0.0;
+    float ea = max(aa, 0.6);
+    if (k > 0.0) gap = smoothstep(up - ea, up + ea, t) * (1.0 - smoothstep(lo - ea, lo + ea, t)) * smoothstep(0.0, 0.08, k);
+    float tv = clamp((t - up) / max(lo - up, aa), 0.0, 1.0);
+    // the inside and teeth take the lip's tone, so no near-black or pure white sits in a soft face
+    vec3 inside = mix(vec3(0.05, 0.012, 0.018), lip * vec3(0.42, 0.22, 0.22), 0.85);
+    inside = mix(inside, inside * vec3(1.25, 1.05, 1.0), tv);
+    float tongue = smoothstep(0.50, 0.78, tv) * (1.0 - smoothstep(0.30, 0.78, abs(s) / max(wf, 0.2))) * smoothstep(0.4, 0.7, openAmt);
+    inside = mix(inside, mix(lip, vec3(0.86, 0.40, 0.42), 0.62), tongue);
+    float teeth = (1.0 - smoothstep(0.06, 0.20, tv)) * smoothstep(0.32, 0.55, openAmt) * (1.0 - smoothstep(0.42, 0.80, abs(s) / max(wf, 0.2)));
+    inside = mix(inside, mix(vec3(0.97, 0.95, 0.92), skin, 0.45), teeth * 0.6);
+    float rimIn = smoothstep(0.0, 0.16, tv) * (1.0 - smoothstep(0.05, 0.22, tv)) + smoothstep(0.72, 0.90, tv) * (1.0 - smoothstep(0.90, 1.0, tv));
+    inside = mix(inside, lip * vec3(0.32, 0.14, 0.15), clamp(rimIn, 0.0, 1.0) * 0.15);
+    c.rgb = mix(c.rgb, inside, clamp(gap, 0.0, 1.0));
+    return c;
+  }
+
   vec4 mouth(vec2 p, vec4 base) {
     float open = uMouthState.x;
     if (open < 0.01) return base;
@@ -90,37 +310,187 @@ export function createRenderer(engine, rig) {
     vec2 r = p - uMouth.xy;
     float s = dot(r, d) / uMouth.w, t = dot(r, n);
     float form = uMouthState.y;                       // -1 wide "i" .. +1 round "o"
-    float wf = mix(0.78, 0.46, clamp(form * 0.5 + 0.5, 0.0, 1.0));
-    float k = 1.0 - (s / wf) * (s / wf);
-    if (k <= 0.0) return base;
-    float line = uMouthState.z * (1.0 - s * s);
-    float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
-    float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0));
-    float up = line - 0.6 - open * 2.5 * hk;
-    float lo = line + open * H * hk;
-    float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
-    if (cov <= 0.0) return base;
-    float tv = clamp((t - up) / max(lo - up, 1.0), 0.0, 1.0);
-    vec3 col = mix(vec3(0.24, 0.05, 0.08), vec3(0.48, 0.15, 0.19), tv);
-    float tongue = smoothstep(0.5, 0.78, tv) * (1.0 - smoothstep(0.45, 0.8, abs(s) / wf));
-    col = mix(col, vec3(0.86, 0.44, 0.47), tongue * 0.9);
-    float teeth = (1.0 - smoothstep(0.12, 0.22, tv)) * smoothstep(0.25, 0.45, open) * (1.0 - smoothstep(0.55, 0.85, abs(s) / wf));
-    col = mix(col, vec3(0.99, 0.96, 0.94), teeth);
-    float rim = 1.0 - smoothstep(0.6, 1.8, lo - t);
-    col = mix(col, vec3(0.36, 0.09, 0.11), rim * 0.85);
-    return vec4(mix(base.rgb, col, cov), 1.0);
+    // One screen pixel, in source px. Computed before any per-pixel return so the
+    // derivative stays valid across the face mesh.
+    float aa = clamp(max(fwidth(t), abs(fwidth(s)) * uMouth.w) * 1.15, 0.02, max(uMouth.w * 0.18, 0.04));
+    if (uFaceScale > 0.9) {
+      float wf = mix(0.78, 0.46, clamp(form * 0.5 + 0.5, 0.0, 1.0));
+      float k = 1.0 - (s / wf) * (s / wf);
+      if (k <= 0.0) return base;
+      float line = uMouthState.z * (1.0 - s * s);
+      float hk = pow(k, mix(0.55, 0.85, clamp(form, 0.0, 1.0)));
+      float px = max(uFaceScale, 0.05);
+      float H = mix(20.0, 26.0, clamp(form, 0.0, 1.0)) * px;
+      float up = line - (0.6 + open * 2.5 * hk) * px;
+      float lo = line + open * H * hk;
+      float cov = smoothstep(-0.7, 0.7, t - up) * smoothstep(-0.7, 0.7, lo - t);
+      if (cov <= 0.0) return base;
+      float tv = clamp((t - up) / max(lo - up, 1.0), 0.0, 1.0);
+      vec3 col = mix(vec3(0.24, 0.05, 0.08), vec3(0.48, 0.15, 0.19), tv);
+      float tongue = smoothstep(0.5, 0.78, tv) * (1.0 - smoothstep(0.45, 0.8, abs(s) / wf));
+      col = mix(col, vec3(0.86, 0.44, 0.47), tongue * 0.9);
+      float teeth = (1.0 - smoothstep(0.12, 0.22, tv)) * smoothstep(0.25, 0.45, open) * (1.0 - smoothstep(0.55, 0.85, abs(s) / wf));
+      col = mix(col, vec3(0.99, 0.96, 0.94), teeth);
+      float rim = 1.0 - smoothstep(0.6, 1.8, lo - t);
+      col = mix(col, vec3(0.36, 0.09, 0.11), rim * 0.85);
+      return vec4(mix(base.rgb, col, cov), 1.0);
+    }
+    if (abs(s) > 1.7 || t < -uMouthFit.y - 2.0 || t > uMouthFit.x + 2.0) return base;
+    // the painting around it is as soft as its own source pixels, so the edge is too
+    return mouthVector(base, p, d, n, open, s, t, form, max(aa, min(2.0, uMouth.w * 0.18)));
+  }
+
+  // Small full-body eyes have no closed-eye drawing. Sliding the lash mesh down squashes
+  // brow and temple pixels from that cut-out across the eye. The upper lid comes down to
+  // the same line that hides the ball (eyeLids), so above that line the opening is skin and
+  // below it the eye still shows. The skin runs, per column, from the colour just above
+  // the opening to the colour just below it, and the edges fade over a few pixels. One
+  // lash arc rides the lid edge and settles on a line that dips in the middle when closed.
+  // A bust (uFaceScale 1) returns the base unchanged.
+  float lidFeather(float H) { return clamp(H * 0.2, 1.5, 3.0); }
+
+  vec4 paintClosedEye(int e, vec2 p, vec4 base) {
+    if (uFaceScale > 0.9) return base;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    if (close < 0.01) return base;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return base;
+    float u = (p.x - box.x) / span;
+    float uf = 2.0 / span;
+    if (u < -uf || u > 1.0 + uf) return base;
+    float uu = clamp(u, 0.0, 1.0);
+    float top = crv(e, true, uu), bot = crv(e, false, uu);
+    float H = max(bot - top, 1.0);
+    float F = lidFeather(H);
+    vec2 lids = eyeLids(e, uu, top, bot);
+    // the lower edge is the lid line while it is inside the opening, and the lower lid,
+    // feathered like the rest, once the eye is shut
+    float shut = smoothstep(0.8, 1.0, close);
+    float edgeW = mix(0.6, F, shut);
+    float side = smoothstep(-uf, uf, u) * (1.0 - smoothstep(1.0 - uf, 1.0 + uf, u));
+    float vert = smoothstep(top - F, top + 0.5, p.y) * (1.0 - smoothstep(lids.x - edgeW, lids.x + edgeW, p.y));
+    float cover = side * vert * smoothstep(0.0, 0.15, close);
+    float smile = clamp(uEyeState[e].y, 0.0, 1.0);
+    float hump = 4.0 * u * (1.0 - u);
+    float rest = mix(top, bot, 0.46) + H * (0.08 - 0.28 * smile) * hump;
+    float lid = mix(lids.x, rest, shut);
+    float thick = max(1.25, H * 0.05);
+    float taper = smoothstep(0.0, 0.12, u) * (1.0 - smoothstep(0.88, 1.0, u));
+    float lash = exp(-((p.y - lid) * (p.y - lid)) / (thick * thick)) * smoothstep(0.0, 0.3, close) * side * taper;
+    if (cover <= 0.001 && lash <= 0.001) return base;
+    float off = max(2.0, H * 0.2);
+    float x = clamp(p.x, box.x, box.y);
+    vec3 above = texAt(vec2(x, top - off)).rgb;
+    vec3 below = texAt(vec2(x, bot + off)).rgb;
+    vec3 lum = vec3(0.2126, 0.7152, 0.0722);
+    if (dot(below, lum) < 0.22) below = texAt(vec2(x, bot + off + H)).rgb;
+    if (dot(above, lum) < 0.22) above = below;
+    if (dot(below, lum) < 0.22) below = above;
+    vec3 skin = mix(above, below, smoothstep(top, bot, p.y));
+    vec4 c = base;
+    c.rgb = mix(c.rgb, skin, cover);
+    // A faint shadow under the lid line: darkest at the line, back to skin about half the
+    // eye height above it. The tint is the skin's own hue, so the shade stays skin.
+    float shadeUp = (1.0 - smoothstep(lid - 0.5, lid + thick, p.y)) * exp(-max(lid - p.y, 0.0) / max(H * 0.45, 1.5));
+    float shade = 0.35 * shadeUp * side * smoothstep(0.0, 0.4, close) * (0.4 + 0.6 * taper);
+    vec3 tint = 0.82 * skin / max(max(skin.r, max(skin.g, skin.b)), 0.05);
+    c.rgb = mix(c.rgb, c.rgb * tint, shade * c.a);
+    vec3 ink = vec3(0.08, 0.045, 0.035) * max(c.a, cover);
+    c.rgb = mix(c.rgb, ink, clamp(lash, 0.0, 0.98));
+    return c;
+  }
+
+  // The lash cut-out also holds the brow. Fading the whole layer would erase it, and
+  // sliding the mesh would smear it. Hide only the open-eye ink the coming-down lid
+  // covers: the whole upper lash above the opening and, once the eye is shut, the lower
+  // lash under it. The edges fade like the painted lid.
+  vec4 maskEyePart(int e, vec2 p, vec4 c) {
+    if (uFaceScale > 0.9) return c;
+    float close = clamp(1.0 - uEyeState[e].x, 0.0, 1.0);
+    // a clear pixel can still receive the upper lash sliding down below, so it goes on
+    if (close < 0.01) return c;
+    vec4 box = uEyeBox[e];
+    float span = box.y - box.x;
+    if (span < 2.0) return c;
+    // sizes come from the middle of the eye: near the corners the opening is a point
+    float Hm = max(crv(e, false, 0.5) - crv(e, true, 0.5), 1.0);
+    float F = lidFeather(Hm);
+    float u = (p.x - box.x) / span;
+    float uf = 2.0 / span;
+    // the side and top edges fade over a few pixels more, so the skin under the lash meets
+    // what is left of the cut-out without a visible rim; the top fade still stops short of
+    // the brow
+    float soft = clamp(Hm * 0.3, 2.0, 5.0);
+    float us = soft / span;
+    if (u < -0.04 - uf - 3.0 * us || u > 1.04 + uf + 3.0 * us) return c;
+    float uu = clamp(u, 0.0, 1.0);
+    float top = crv(e, true, uu), bot = crv(e, false, uu);
+    vec2 lids = eyeLids(e, uu, top, bot);
+    float shut = smoothstep(0.8, 1.0, close);
+    float edgeW = mix(0.6, F, shut);
+    // A thick upper lash reaches well above the opening. The brow sits further up and is
+    // left as drawn: the hidden band stops halfway to the brow centre line (box.z).
+    float above = max(top - max(3.0, Hm * 0.75), min(top - 3.0, mix(box.z, top, 0.5)));
+    // shut, the band reaches past the lower lash's tail, which would else show as a faint arc
+    float below = mix(lids.x, max(lids.x, bot + max(3.0, Hm * 0.65)), shut);
+    float side = smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u));
+    float inside = smoothstep(max(above - F - soft, mix(box.z, top, 0.5) - F), above + 0.8, p.y) * (1.0 - smoothstep(below - edgeW, below + edgeW, p.y));
+    // shut, the lash's flick past the outer corner goes too (the half-shut eye keeps it);
+    // eye 0 is the left one in the picture, so its outer corner is at u = 0
+    float sideW = e == 0
+      ? smoothstep(-0.02 - uf - 3.0 * us, 0.03 - us, u) * (1.0 - smoothstep(0.97 - 0.5 * us, 1.02 + uf + us, u))
+      : smoothstep(-0.02 - uf - us, 0.03 + 0.5 * us, u) * (1.0 - smoothstep(0.97 + us, 1.02 + uf + 3.0 * us, u));
+    // the drawn lash is hidden as soon as the lid moves; the riding copy below takes over
+    vec4 hidden = c * (1.0 - inside * mix(side, sideW, shut));
+    // While the eye is half shut, the upper lash rides the coming-down lid: the drawn lash
+    // band just above the opening is shown again, moved down by how far the lid has come.
+    // It fades out as the eye shuts, where the painted lid takes over.
+    float drop = lids.x - top;
+    // both eyes draw the same lash thickness, from the smaller opening: sized per eye, the
+    // taller eye's lash came out darker
+    float Ho = max(crv(1 - e, false, 0.5) - crv(1 - e, true, 0.5), 1.0);
+    float lashH = max(2.0, min(Hm, Ho) * 0.22);
+    // the ink's bottom (the opening's top line) lands on the lid edge, over the ball's cut
+    // (nearly open, the copy sits on the drawn lash's own texels, so it is not blurred)
+    float thick = clamp(1.0 - close / 0.236, 0.0, 1.0);
+    float ys = p.y - drop - 0.5 * (1.0 - thick);
+    // solid where it meets the lid, thinning out upward like the open eye's lash
+    // nearly open (close < 0.236, the mapped sad value) the copy reaches as high as the hidden
+    // lash and its top edge comes down as the eye closes, so the lash thins without a step.
+    // The top of that edge stays up at the hidden band's top while the bottom comes down, so
+    // the thinning lash fades up into what is left above it (hair, crease) instead of leaving
+    // a pale gap under a thin hard line
+    float reachLo = max(thick, smoothstep(0.05, 0.4, thick)), reachHi = clamp(2.0 * thick - reachLo, 0.0, reachLo);
+    float bandLo = mix(top - lashH - 1.0, max(above - F - soft, mix(box.z, top, 0.5) - F), reachLo);
+    float bandHi = mix(top - 0.4 * lashH, above + 0.8, reachHi);
+    float band = smoothstep(bandLo, bandHi, ys) * (1.0 - smoothstep(top + 0.5, top + 1.5, ys));
+    float ride = band * side * max(smoothstep(0.5, 1.5, drop), 1.0 - smoothstep(0.2, 0.236, close)) * (1.0 - shut);
+    // nearly open (open 0.85 and up) the whole hidden area is the drawn picture moved down
+    // with the lid, cross-faded in, so no half-cleared edge lets the skin under it show;
+    // between that and the sad value (0.764) it blends into the riding copy below
+    float whole = clamp((0.236 - close) / 0.086, 0.0, 1.0);
+    // it comes in quickly after the sad value, so open 0.78-0.8 keeps little of the pale band
+    whole = 1.0 - (1.0 - whole) * (1.0 - whole);
+    vec4 moved = mix(c, texAt(vec2(p.x, p.y - drop)), inside * side);
+    if (ride <= 0.001) return mix(hidden, moved, whole);
+    vec4 lash = texAt(vec2(p.x, ys)) * ride;
+    return mix(lash + hidden * (1.0 - lash.a), moved, whole);
   }
 
   void main() {
     vec2 p = uRect.xy + vUv * uRect.zw;
     vec4 c;
     if (uFace == 1) {
-      c = mouth(p, texAt(p));
-      float blush = exp(-dot((p - uCheeks.xy) / vec2(48.0, 22.0), (p - uCheeks.xy) / vec2(48.0, 22.0)))
-                  + exp(-dot((p - uCheeks.zw) / vec2(40.0, 20.0), (p - uCheeks.zw) / vec2(40.0, 20.0)));
+      c = paintClosedEye(1, p, paintClosedEye(0, p, mouth(p, texAt(p))));
+      vec2 blushA = vec2(48.0, 22.0) * uFaceScale, blushB = vec2(40.0, 20.0) * uFaceScale;
+      float blush = exp(-dot((p - uCheeks.xy) / blushA, (p - uCheeks.xy) / blushA))
+                  + exp(-dot((p - uCheeks.zw) / blushB, (p - uCheeks.zw) / blushB));
       c.rgb = mix(c.rgb, c.rgb * vec3(1.0, 0.62, 0.64) , clamp(blush * uCheek * 0.55, 0.0, 1.0) * c.a);
-    } else if (uFace >= 2) {
+    } else if (uFace == 2 || uFace == 3) {
       c = eyeBall(uFace - 2, p);
+    } else if (uFace == 4 || uFace == 5) {
+      c = maskEyePart(uFace - 4, p, texAt(p));
     } else {
       c = texAt(p);
     }
@@ -199,11 +569,17 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid lines along one axis: `cell` spacing, `fine.cell` inside [fine.from, fine.to).
-  function axis(start, len, cell, fine) {
+  // Optional extra intervals (elbows and knees) use a smaller cell. With none, the
+  // spacing matches the single fine rectangle.
+  function axis(start, len, cell, fine, extra = null) {
     const out = [start];
     let v = start;
     while (v < start + len - 0.5) {
-      const c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      let c = fine && v >= fine.from && v < fine.to ? fine.cell : cell;
+      if (extra) for (let i = 0; i < extra.length; i++) {
+        const region = extra[i];
+        if (v >= region.from && v < region.to && region.cell < c) c = region.cell;
+      }
       v = Math.min(start + len, v + c);
       out.push(v);
     }
@@ -211,11 +587,13 @@ export function createRenderer(engine, rig) {
   }
 
   // Grid mesh over a layer rect (optionally denser inside `fine`); cells that are fully
-  // transparent are dropped.
-  function buildGrid(rect, cell, alpha, alphaW, fine = null) {
+  // transparent are dropped. `regions` are extra dense rectangles, used around hinges.
+  function buildGrid(rect, cell, alpha, alphaW, fine = null, regions = null) {
     const [rx, ry, rw, rh] = rect;
-    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell });
-    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell });
+    const extraX = regions && regions.map(region => ({ from: region.x0, to: region.x1, cell: region.cell }));
+    const extraY = regions && regions.map(region => ({ from: region.y0, to: region.y1, cell: region.cell }));
+    const xs = axis(rx, rw, cell, fine && { from: fine.x0, to: fine.x1, cell: fine.cell }, extraX);
+    const ys = axis(ry, rh, cell, fine && { from: fine.y0, to: fine.y1, cell: fine.cell }, extraY);
     const cols = xs.length - 1, rows = ys.length - 1;
     const nv = (cols + 1) * (rows + 1);
     const rest = new Float32Array(nv * 2), uv = new Float32Array(nv * 2);
@@ -243,6 +621,70 @@ export function createRenderer(engine, rig) {
       if (j === rows - 1) lines.push(c, d);
     }
     return { rect, cols, rows, rest, uv, pos: new Float32Array(rest), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
+  }
+
+  // Mesh for a rigid cut-out: `cell`-sized squares inside the drawing and `edge`-pixel
+  // squares wherever a square holds both drawn and empty pixels, so the triangles follow the
+  // outline within `edge` px. All vertices sit on one `edge` lattice. The cut-out moves as one
+  // rigid piece, so the T-junctions where the two sizes meet cannot open.
+  function buildContourGrid(rect, cell, alpha, alphaW, edge = 2) {
+    const [rx, ry, rw, rh] = rect;
+    const alphaH = alpha.length / alphaW;
+    const opaqueQuad = alphaW === 1;
+    // summed-area tables of drawn (alpha > 3) and solid (alpha > 250) pixels
+    const W1 = alphaW + 1;
+    const drawn = new Int32Array(W1 * (alphaH + 1)), solid = new Int32Array(W1 * (alphaH + 1));
+    for (let y = 0; y < alphaH; y++) {
+      let rowDrawn = 0, rowSolid = 0;
+      for (let x = 0; x < alphaW; x++) {
+        const a = alpha[y * alphaW + x];
+        rowDrawn += a > 3 ? 1 : 0; rowSolid += a > 250 ? 1 : 0;
+        drawn[(y + 1) * W1 + x + 1] = drawn[y * W1 + x + 1] + rowDrawn;
+        solid[(y + 1) * W1 + x + 1] = solid[y * W1 + x + 1] + rowSolid;
+      }
+    }
+    const box = (table, x0, y0, x1, y1) => table[y1 * W1 + x1] - table[y0 * W1 + x1] - table[y1 * W1 + x0] + table[y0 * W1 + x0];
+    // `any`: a drawn pixel within the square grown by `margin`; `full`: every pixel of the grown square is solid
+    function coverage(px0, py0, px1, py1, margin) {
+      if (opaqueQuad) return { any: true, full: true };
+      const x0 = Math.max(0, px0 - margin), y0 = Math.max(0, py0 - margin);
+      const x1 = Math.min(alphaW, px1 + margin), y1 = Math.min(alphaH, py1 + margin);
+      if (x1 <= x0 || y1 <= y0) return { any: false, full: false };
+      const area = (px1 + margin - (px0 - margin)) * (py1 + margin - (py0 - margin));
+      return { any: box(drawn, x0, y0, x1, y1) > 0, full: box(solid, x0, y0, x1, y1) === area };
+    }
+    const nx = Math.ceil(rw / edge), ny = Math.ceil(rh / edge);
+    const k = Math.max(1, Math.round(cell / edge));
+    const index = new Map(), rest = [], uv = [], tris = [], lines = [];
+    const vertex = (i, j) => {
+      const key = j * (nx + 1) + i;
+      let v = index.get(key);
+      if (v === undefined) {
+        v = rest.length / 2;
+        const x = rx + Math.min(rw, i * edge), y = ry + Math.min(rh, j * edge);
+        rest.push(x, y);
+        uv.push((x - rx) / rw, (y - ry) / rh);
+        index.set(key, v);
+      }
+      return v;
+    };
+    const emit = (i0, j0, i1, j1) => {
+      const a = vertex(i0, j0), b = vertex(i1, j0), c = vertex(i0, j1), d = vertex(i1, j1);
+      tris.push(a, b, c, b, d, c);
+      lines.push(a, b, a, c, b, c, b, d, c, d);
+    };
+    const px = i => Math.min(rw, i * edge), py = j => Math.min(rh, j * edge);
+    for (let J = 0; J < ny; J += k) for (let I = 0; I < nx; I += k) {
+      const I1 = Math.min(nx, I + k), J1 = Math.min(ny, J + k);
+      const coarse = coverage(px(I), py(J), px(I1), py(J1), 2);
+      if (!coarse.any) continue;
+      if (coarse.full) { emit(I, J, I1, J1); continue; }
+      for (let j = J; j < J1; j++) for (let i = I; i < I1; i++) {
+        if (coverage(px(i), py(j), px(i + 1), py(j + 1), 1).any) emit(i, j, i + 1, j + 1);
+      }
+    }
+    const restArray = new Float32Array(rest);
+    return { rect, cols: 0, rows: 0, rest: restArray, uv: new Float32Array(uv), pos: new Float32Array(restArray), tris: new Uint32Array(tris), lines: new Uint32Array(lines) };
   }
 
   class Renderer {
@@ -302,6 +744,21 @@ export function createRenderer(engine, rig) {
       const layer = { name, image: img, mesh, tex: this.texture(img), vao, posBuf, uvBuf, triBuf, lineBuf, visible: true, face: !!opts.face, eyeBall: opts.eyeBall, color: opts.color || [1, 1, 1, 1] };
       this.layers.push(layer);
       return layer;
+    }
+
+    /** Move a layer under the body or just above it, leaving the eyes and mouth drawings on top. */
+    placeLayer(name, phase) {
+      const index = this.layers.findIndex(layer => layer.name === name);
+      if (index < 0) return;
+      const [layer] = this.layers.splice(index, 1);
+      if (phase === 'behind') {
+        const base = this.layers.findIndex(item => item.name === 'base');
+        this.layers.splice(Math.max(0, base), 0, layer);
+        return;
+      }
+      const over = this.layers.findIndex(item => /^(eye|eyes_|mouth_|hair)/.test(item.name));
+      if (over < 0) this.layers.push(layer);
+      else this.layers.splice(over, 0, layer);
     }
 
     destroy() {
@@ -386,7 +843,7 @@ export function createRenderer(engine, rig) {
       }
       gl.uniform2fv(m.u.uScale, this.scale); gl.uniform2fv(m.u.uOffset, this.offset);
       gl.uniform1i(m.u.uTex, 0);
-      gl.uniform4fv(m.u.uEyeBox, EYES.flatMap(e => [e.x0, e.x1, 0, 0]));
+      gl.uniform4fv(m.u.uEyeBox, EYES.flatMap(e => [e.x0, e.x1, browY, 0]));
       gl.uniform1fv(m.u.uEyeTop, EYES.flatMap(e => e.top));
       gl.uniform1fv(m.u.uEyeBot, EYES.flatMap(e => e.bot));
       gl.uniform4fv(m.u.uEyeState, state.eyes);
@@ -394,6 +851,8 @@ export function createRenderer(engine, rig) {
       gl.uniform4f(m.u.uMouthState, state.mouthOpen, state.mouthForm, MOUTH.bow, 0);
       gl.uniform4f(m.u.uCheeks, CHEEKS[0][0], CHEEKS[0][1], CHEEKS[1][0], CHEEKS[1][1]);
       gl.uniform1f(m.u.uCheek, state.cheek);
+      gl.uniform1f(m.u.uFaceScale, faceScale);
+      gl.uniform2f(m.u.uMouthFit, mouthDown, mouthUp);
       gl.activeTexture(gl.TEXTURE0);
 
       for (const L of this.layers) {
@@ -430,7 +889,8 @@ export function createRenderer(engine, rig) {
       if (this.lighting.enabled) { gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, L.normal); gl.activeTexture(gl.TEXTURE0); }
       gl.bindTexture(gl.TEXTURE_2D, L.tex);
       gl.uniform4fv(m.u.uRect, L.mesh.rect);
-      gl.uniform1i(m.u.uFace, L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : 0);
+      const faceId = L.eyeBall !== undefined ? 2 + L.eyeBall : L.face ? 1 : L.eyeMask !== undefined ? 4 + L.eyeMask : 0;
+      gl.uniform1i(m.u.uFace, faceId);
       gl.uniform1f(m.u.uAlpha, alpha);
       gl.drawElements(gl.TRIANGLES, L.mesh.tris.length, gl.UNSIGNED_INT, 0);
     }
@@ -452,6 +912,16 @@ export function createRenderer(engine, rig) {
       gl.drawArrays(gl.POINTS, 0, pts.length);
     }
 
+    setTriangleOrder(name, tris) {
+      const layer = this.layers.find(item => item.name === name);
+      if (!layer) return;
+      const gl = this.gl;
+      gl.bindVertexArray(layer.vao);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, layer.triBuf);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tris, gl.DYNAMIC_DRAW);
+      gl.bindVertexArray(null);
+    }
+
     // canvas CSS px -> source image px
     toImage(cx, cy) {
       if (!this.pxOff) return null;   // pointer moved before the first frame was drawn
@@ -459,5 +929,5 @@ export function createRenderer(engine, rig) {
       return [(cx * dpr - this.pxOff[0]) / this.pxScale, (cy * dpr - this.pxOff[1]) / this.pxScale];
     }
   }
-  return { Renderer, buildGrid };
+  return { Renderer, buildGrid, buildContourGrid };
 }
