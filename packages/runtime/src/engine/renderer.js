@@ -231,7 +231,7 @@ export function createRenderer(engine, rig) {
     float wf = mix(0.96, form < 0.0 ? 1.08 : 0.58, abs(form));
     float k = 1.0 - (s / wf) * (s / wf);
     float line = uMouthState.z * (1.0 - clamp(s * s, 0.0, 1.0));
-    float hk = k > 0.0 ? pow(k, mix(0.85, form < 0.0 ? 0.6 : 1.0, abs(form))) : 0.0;
+    float hk = k > 0.0 ? pow(k, mix(0.5, form < 0.0 ? 0.45 : 0.6, abs(form))) : 0.0;
     float rad = length(vec2(s / 1.30, (t - line * 0.25) / (unit * 0.95)));
     if (rad > 1.35 && abs(s) > wf + 0.25) return base;
 
@@ -259,7 +259,7 @@ export function createRenderer(engine, rig) {
     float hM = max(hk, 0.6 * pow(kM, 1.5));
     float upM = min(up, line - min(unit * (0.04 + openAmt * 0.24 * hM), upFit * 0.7));
     float loM = max(lo, min(line + openAmt * gapH * hM, down - lipLoT * 0.35));
-    float topA = -upFit - unit * 0.3, botB = down + unit * 0.45;
+    float topA = -upFit - unit * 0.3, botB = down + unit * 0.2;
     float seam = min(unit * 0.08, (botB - line) * 0.2);
     float tt = t;
     if (t < upM) tt = topA + (t - topA) * (line - topA) / max(upM - topA, aa);
@@ -470,6 +470,8 @@ export function createRenderer(engine, rig) {
     // with the lid, cross-faded in, so no half-cleared edge lets the skin under it show;
     // between that and the sad value (0.764) it blends into the riding copy below
     float whole = clamp((0.236 - close) / 0.086, 0.0, 1.0);
+    // it comes in quickly after the sad value, so open 0.78-0.8 keeps little of the pale band
+    whole = 1.0 - (1.0 - whole) * (1.0 - whole);
     vec4 moved = mix(c, texAt(vec2(p.x, p.y - drop)), inside * side);
     if (ride <= 0.001) return mix(hidden, moved, whole);
     vec4 lash = texAt(vec2(p.x, ys)) * ride;
