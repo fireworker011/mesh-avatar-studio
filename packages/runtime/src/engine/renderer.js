@@ -172,6 +172,11 @@ export function createRenderer(engine, rig) {
   }
 
   vec4 texAt(vec2 p) { return texture(uTex, (p - uRect.xy) / uRect.zw); }
+  // Texture gradients taken where every pixel still runs (mouth(), before its early returns).
+  // A sample after those returns gets undefined derivatives at the cut, so its mip level
+  // could jump to a blurry one: a grey row that also changed from render to render.
+  vec2 gGx, gGy;
+  vec4 texAtG(vec2 p) { return textureGrad(uTex, (p - uRect.xy) / uRect.zw, gGx, gGy); }
 
   // Eye white + iris layer: shown only between the lids (the lids cover it, it never squashes);
   // the iris slides inside the opening for the gaze.
@@ -268,7 +273,7 @@ export function createRenderer(engine, rig) {
     // showed as a pale rim; it shows the lip line's own pixels instead
     else tt = t > 0.5 * (upM + loM) ? line + seam : line;
     tt = t < topA || t > botB ? t : tt;
-    vec4 c = texAt(p + n * (tt - t));
+    vec4 c = texAtG(p + n * (tt - t));
     // a picture whose mouth is only a drawn line has no lips to move apart: where the moved
     // pixels are still skin-coloured the lips are painted in, as before
     vec3 skin = mouthSkin(d, n);
@@ -313,6 +318,7 @@ export function createRenderer(engine, rig) {
     // One screen pixel, in source px. Computed before any per-pixel return so the
     // derivative stays valid across the face mesh.
     float aa = clamp(max(fwidth(t), abs(fwidth(s)) * uMouth.w) * 1.15, 0.02, max(uMouth.w * 0.18, 0.04));
+    gGx = dFdx(p / uRect.zw); gGy = dFdy(p / uRect.zw);
     if (uFaceScale > 0.9) {
       float wf = mix(0.78, 0.46, clamp(form * 0.5 + 0.5, 0.0, 1.0));
       float k = 1.0 - (s / wf) * (s / wf);
@@ -335,7 +341,11 @@ export function createRenderer(engine, rig) {
       col = mix(col, vec3(0.36, 0.09, 0.11), rim * 0.85);
       return vec4(mix(base.rgb, col, cov), 1.0);
     }
-    if (abs(s) > 1.7 || t < -uMouthFit.y - 2.0 || t > uMouthFit.x + 2.0) return base;
+    // the lips are moved from as far as mouthVector's own squeeze reaches (topA / botB);
+    // cut off at the fit instead, the moved band ended in a hard row under the nose
+    float mUnit = max(uMouth.w, 1.0);
+    float mTop = max(uMouthFit.y, mUnit * 0.2) + mUnit * 0.3, mBot = max(uMouthFit.x, mUnit * 0.45) + mUnit * 0.2;
+    if (abs(s) > 1.7 || t < -max(uMouthFit.y, mTop) - 2.0 || t > max(uMouthFit.x, mBot) + 2.0) return base;
     // the painting around it is as soft as its own source pixels, so the edge is too
     return mouthVector(base, p, d, n, open, s, t, form, max(aa, min(2.0, uMouth.w * 0.18)));
   }
