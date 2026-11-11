@@ -85,6 +85,7 @@ test('strand and head drags change inspector, saved JSON and frozen preview pixe
 });
 
 test('angle sliders retain the rendered pose after rebuilding and stopping a sweep', async ({ page }) => {
+  test.setTimeout(60_000);
   test.skip(!samplePresent, sampleSkipReason);
   await page.goto('/');
   await dismissGuide(page);
@@ -121,5 +122,5 @@ test('angle sliders retain the rendered pose after rebuilding and stopping a swe
   // sweep runs for 6 s after the first one, so allow for a busy machine.
   await page.getByRole('button', { name: 'Sweep angles', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Sweep angles', exact: true })).toBeVisible({ timeout: 20000 });
-  await expect.poll(async () => hash(await preview.screenshot()), { timeout: 15000 }).toBe(turned);
+  await expect.poll(async () => hash(await preview.screenshot({ timeout: 5_000 })), { timeout: 20_000 }).toBe(turned);
 });

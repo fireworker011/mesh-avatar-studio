@@ -1,7 +1,11 @@
 import type { Point } from 'mesh-avatar';
 import type { Viewport, Shape, Handle } from './model';
 
-export const MIN_SCALE = 0.1, MAX_SCALE = 16;
+export const MIN_SCALE = 0.05, MAX_SCALE = 16;
+/** A standing figure, such as 9:16 or 1:2, is taller than a bust. */
+export function isTallImage(width: number, height: number) {
+  return height > width * 1.25;
+}
 export const clampScale = (scale: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 export function zoomAt(view: Viewport, scale: number, point: Point): Viewport {
   const next = clampScale(scale), ratio = next / view.scale;

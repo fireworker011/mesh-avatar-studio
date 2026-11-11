@@ -2,14 +2,14 @@ import { test, expect } from 'vitest';
 import fixture from '../samples/miko-qipao/rig.json';
 import { buildOverlay, imagePoint, nearestHandle, screen } from '../src/editor/model';
 import { parseRig } from 'mesh-avatar';
-import { zoomAt, fitBounds, partBounds } from '../src/editor/viewport';
+import { zoomAt, fitBounds, partBounds, isTallImage, MIN_SCALE } from '../src/editor/viewport';
 
 test('zoom keeps the image coordinate under the cursor even at both scale limits', () => {
   const view = { scale: 0.6, x: -100, y: 45 }, cursor: [number, number] = [190, 235];
   const origin = imagePoint(cursor, view);
   for (const scale of [0.001, 0.5, 2, 100]) {
     const next = zoomAt(view, scale, cursor);
-    expect(next.scale).toBeGreaterThanOrEqual(0.1); expect(next.scale).toBeLessThanOrEqual(16);
+    expect(next.scale).toBeGreaterThanOrEqual(MIN_SCALE); expect(next.scale).toBeLessThanOrEqual(16);
     expect(imagePoint(cursor, next)[0]).toBeCloseTo(origin[0], 10);
     expect(imagePoint(cursor, next)[1]).toBeCloseTo(origin[1], 10);
   }
@@ -29,4 +29,15 @@ test('handle hit distance stays eight CSS pixels across the supported zoom range
     expect(nearestHandle(handles, [center[0] + 7, center[1]], view)?.id).toBe('head.center');
     expect(nearestHandle(handles, [center[0] + 9, center[1]], view)).toBeUndefined();
   }
+});
+test('a standing image is recognised as tall and can fit below the old zoom floor', () => {
+  expect(isTallImage(1080, 1920)).toBe(true);
+  expect(isTallImage(540, 1080)).toBe(true);
+  expect(isTallImage(1254, 1254)).toBe(false);
+  const bounds = { x: 0, y: 0, width: 540, height: 4000 };
+  const size = { width: 400, height: 360 };
+  const view = fitBounds(bounds, size, 16);
+  expect(view.scale).toBeGreaterThanOrEqual(MIN_SCALE);
+  expect(view.scale).toBeLessThan(0.1);
+  expect(view.y + bounds.height * view.scale).toBeLessThanOrEqual(size.height - 16 + 1e-6);
 });

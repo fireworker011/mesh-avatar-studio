@@ -61,4 +61,13 @@ test('the stream follows one Live page until it goes quiet, so two open pages do
   expect(pose.sample(1110, 0.016).params.mouthOpen).toBe(0);
   for (const sender of ['UPPER123', 'short', 'x'.repeat(33), 5]) expect(liveMessage({ ...from('aaaaaaaa', 0), sender })).toBeNull();
   expect(liveMessage({ project: 'p', params: { mouthOpen: 0 }, t: 1 })).toEqual({ project: 'p', params: { mouthOpen: 0 }, t: 1 });
+  const posed = { ...message, pose: { format: 'mesh-avatar-pose' as const, version: 1 as const, joints: { elbowL: { swing: 1.2, twist: 0 } }, drawOrder: { lowerArmL: 2 } } };
+  expect(liveMessage(posed)?.pose).toEqual(posed.pose);
+  expect(liveMessage({ ...message, pose: null })?.pose).toBeNull();
+  expect(liveMessage({ ...message, pose: { format: 'other', joints: {} } })).toBeNull();
+  const stream = new LivePose(message.project);
+  expect(stream.receive(posed, 10)).toBe(true);
+  expect(stream.sample(10, 0.016).pose).toEqual(posed.pose);
+  expect(stream.receive({ ...message, pose: null }, 20)).toBe(true);
+  expect(stream.sample(20, 0.016).pose).toBeNull();
 });

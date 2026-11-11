@@ -11,6 +11,12 @@ test('hit-testing finds the nearest handle within eight screen pixels', () => {
   const competing = [...handles, { ...handles[0], id: 'nearer', point: [625, 400] as [number, number] }];
   expect(nearestHandle(competing, [625 * 0.5 + 20, 210], view)?.id).toBe('nearer');
 });
+test('full-body joints can be grabbed from a little farther away', () => {
+  const handle = { id: 'fullBody.bones.upperArmL.0', item: 'fullBody.bones.upperArmL.pivot', group: 'fullBody', point: [100, 100] as [number, number], xPath: 'a', yPath: 'b' };
+  const close = { scale: 1, x: 0, y: 0 };
+  expect(nearestHandle([handle], [114, 100], close)?.id).toBe(handle.id);
+  expect(nearestHandle([handle], [118, 100], close)).toBeUndefined();
+});
 test('dragging a center updates exactly its coordinates and radius handles preserve the center', () => {
   const rig = parseRig(fixture);
   const handles = buildOverlay(rig).handles;

@@ -1,5 +1,5 @@
 import { LightingControls, LightHandle, lightingText } from '../lighting/Controls';
-import { colorHex, LIVE_EXPRESSIONS, type LiveExpression, type MeshAvatar } from 'mesh-avatar';
+import { colorHex, createVisemeTracker, LIVE_EXPRESSIONS, type LiveExpression, type MeshAvatar } from 'mesh-avatar';
 import { loadLighting, saveLighting } from '../lighting/storage';
 import { loadLightingPresets, sameLighting, saveLightingPresets } from '../lighting/presets';
 import { useEffect, useRef, useState } from 'react';
@@ -7,6 +7,8 @@ import { useI18n } from '../editor/i18n';
 import { createAvatarView } from './avatar-view';
 import { viewSettings, streamUrl, backgroundColor } from './settings';
 import { FacePose, type TrackingOptions } from './tracking';
+import { BodyDriver } from './body-pose';
+import { driveSpeech } from './speech-source';
 import { CameraCapture, MicrophoneCapture, type CameraState, type MicState, type BackgroundTracking } from './media';
 import { liveText } from './i18n';
 import { Icon } from '../editor/Icon';
@@ -37,14 +39,16 @@ export function LiveApp() {
   const avatarRef = useRef<MeshAvatar | null>(null);
   const lightRef = useRef(settings.lighting); lightRef.current = settings.lighting;
   const pose = useRef(new FacePose());
+  const viseme = useRef(createVisemeTracker());
+  const body = useRef(new BodyDriver());
   const controls = useRef({ options, gain, micState, cameraState }); controls.current = { options, gain, micState, cameraState };
   const refreshDevices = () => { void navigator.mediaDevices?.enumerateDevices().then(setDevices).catch(() => undefined); };
   useEffect(() => {
-    const capture = new CameraCapture(video.current!, (result, now) => pose.current.update(result, now), state => { setCameraState(state); if (state !== 'running') setTracking(false); });
+    const capture = new CameraCapture(video.current!, (result, now) => { pose.current.update(result, now); body.current.update(result, now); }, state => { setCameraState(state); if (state !== 'running') setTracking(false); });
     const mic = new MicrophoneCapture(setMicState);
     camera.current = capture; microphone.current = mic;
     refreshDevices(); navigator.mediaDevices?.addEventListener('devicechange', refreshDevices);
-    const stop = () => { capture.stop(); mic.stop(); pose.current.reset(); };
+    const stop = () => { capture.stop(); mic.stop(); pose.current.reset(); body.current.reset(); };
     window.addEventListener('pagehide', stop);
     return () => { stop(); navigator.mediaDevices?.removeEventListener('devicechange', refreshDevices); window.removeEventListener('pagehide', stop); };
   }, []);
@@ -62,12 +66,13 @@ export function LiveApp() {
       const control = controls.current, sampled = pose.current.sample(now, dt, control.options);
       setTracking(sampled.tracking);
       avatar.setAutoIdle(!sampled.tracking); avatar.setAutoMotion(!sampled.tracking);
-      avatar.setParameters(sampled.params, sampled.weight);
+      body.current.apply(avatar, now, dt, control.options);
       const micOn = control.micState === 'micOn';
-      avatar.setSpeaking(micOn); avatar.setVoiceLevel(micOn ? microphone.current?.level(control.gain) ?? 0 : 0);
+      driveSpeech(avatar, sampled.params, { micOn, frame: micOn ? microphone.current?.spectrum(control.gain) ?? null : null, dt }, viseme.current);
+      avatar.setParameters(sampled.params, sampled.weight);
     }, (avatar, now) => {
       // An expression alone also drives the stream view, including its fade back to neutral.
-      if (controls.current.cameraState === 'running' || controls.current.micState === 'micOn' || avatar.getExpression().active) send(avatar.getParameters(), now);
+      if (controls.current.cameraState === 'running' || controls.current.micState === 'micOn' || avatar.getExpression().active) send(avatar.getParameters(), now, avatar.fullBody ? avatar.getSkeletonPoseJson() : undefined);
     }).then(value => { if (cancelled) value.destroy(); else { view = value; avatarRef.current = value.avatar; value.avatar.setLighting(lightRef.current); value.avatar.setExpression(expressionRef.current); setViewState('ready'); } }).catch(() => { if (!cancelled) setViewState('projectError'); });
     return () => { cancelled = true; clock.terminate(); view?.destroy(); avatarRef.current = null; };
   }, [settings.project, settings.fit]);
@@ -125,7 +130,7 @@ export function LiveApp() {
   const url = streamUrl(settings, location.origin);
   const status = cameraState === 'running' ? tracking ? 'tracking' : 'lost' : cameraState;
   return <main className="live-app">
-    <header className="live-header"><div><a href="/">{t.back}</a><h1>Mesh Avatar Studio <span>{t.title}</span></h1></div>
+    <header className="live-header"><div><a href="/">{t.back}</a><h1>フルボディエディター <span>{t.title}</span></h1></div>
       <div className="live-languages">{(['en', 'ja', 'zh'] as const).map(lang => <button key={lang} aria-pressed={language === lang} onClick={() => setLanguage(lang)}>{({ en: 'English', ja: '日本語', zh: '简体中文' })[lang]}</button>)}</div>
     </header>
     <div className="live-layout"><section className="live-view"><div className="live-preview checkerboard lighting-preview" style={{ backgroundColor: settings.background, backgroundImage: settings.background === 'transparent' ? undefined : 'none' }}>
@@ -136,7 +141,7 @@ export function LiveApp() {
       {duplicatePage && <p role="alert" className="live-warning" data-testid="duplicate-live-page">{t.duplicatePage}</p>}
       <section><h2>{t.camera}</h2><label>{t.device}<select aria-label={t.camera} value={cameraId} disabled={cameraActive} onChange={event => setCameraId(event.target.value)}><option value="">{t.defaultDevice}</option>{devices.filter(device => device.kind === 'videoinput' && device.deviceId).map((device, i) => <option key={device.deviceId} value={device.deviceId}>{device.label || `${t.camera} ${i + 1}`}</option>)}</select></label>
         <div className="live-buttons"><button className="live-primary" disabled={!cameraActive && viewState !== 'ready'} onClick={() => {
-          setCalibrated(false); pose.current.reset();
+          setCalibrated(false); pose.current.reset(); body.current.reset();
           if (cameraActive) camera.current?.stop(); else void camera.current?.start(cameraId).then(refreshDevices);
         }}>{cameraActive ? t.stop : t.start}</button><button disabled={!tracking} onClick={() => setCalibrated(pose.current.calibrate(performance.now()))}>{t.calibrate}</button></div>
         <p role="status" data-testid="tracking-status" data-state={status}>{t[status]}</p>

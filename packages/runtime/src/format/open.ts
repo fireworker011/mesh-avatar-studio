@@ -21,9 +21,10 @@ function json(bytes: Uint8Array, path: string) {
   try { return decode(bytes); }
   catch { throw new Error(`${path}: invalid UTF-8 JSON`); }
 }
-function assetNames(layers: { layers?: Record<string, unknown> }, sprites?: { layers?: Record<string, unknown> }) {
+function assetNames(layers: { layers?: Record<string, unknown> }, sprites?: { layers?: Record<string, unknown> }, parts?: { layers?: Record<string, unknown> }) {
   return ['layers.json', 'base.png', 'hairmask.png', ...Object.keys(layers?.layers ?? {}).map(name => `${name}.png`),
-    ...(sprites ? ['sprites/sprites.json', ...Object.keys(sprites.layers ?? {}).map(name => `sprites/${name}.png`)] : [])];
+    ...(sprites ? ['sprites/sprites.json', ...Object.keys(sprites.layers ?? {}).map(name => `sprites/${name}.png`)] : []),
+    ...(parts ? ['parts/parts.json', ...Object.keys(parts.layers ?? {}).map(name => `parts/${name}.png`)] : [])];
 }
 function assertValid(files: Parameters<typeof validateAvatarFiles>[0]) {
   const errors = validateAvatarFiles(files);
@@ -39,7 +40,8 @@ function fromArchive(data: ArrayBuffer | Uint8Array): AvatarPackage {
   const manifest = parseManifest(json(files['avatar.json'], 'avatar.json'));
   const rig = parseRig(json(files['rig.json'], 'rig.json'));
   const names = assetNames(json(files['built/layers.json'], 'built/layers.json'),
-    files['built/sprites/sprites.json'] ? json(files['built/sprites/sprites.json'], 'built/sprites/sprites.json') : undefined);
+    files['built/sprites/sprites.json'] ? json(files['built/sprites/sprites.json'], 'built/sprites/sprites.json') : undefined,
+    files['built/parts/parts.json'] ? json(files['built/parts/parts.json'], 'built/parts/parts.json') : undefined);
   const assets: Record<string, string> = {}, urls: string[] = [];
   const release = () => { urls.splice(0).forEach(url => URL.revokeObjectURL(url)); };
   try {
@@ -80,8 +82,9 @@ export async function openAvatar(source: AvatarSource, options: OpenAvatarOption
   }
   const rigFile = options.rigFile ?? 'rig.json';
   checkEntryName(rigFile);
-  const [raw, metadata, manifest, sprites] = await Promise.all([
+  const [raw, metadata, manifest, sprites, parts] = await Promise.all([
     read(rigFile), read('built/layers.json'), read('avatar.json', true), read('built/sprites/sprites.json', true),
+    read('built/parts/parts.json', true),
   ]);
   if (Array.isArray(raw?.eyes) && Array.isArray(metadata?.eyes)) {
     raw.eyes = raw.eyes.map((eye: Record<string, unknown>, i: number) => {
@@ -92,7 +95,7 @@ export async function openAvatar(source: AvatarSource, options: OpenAvatarOption
     });
   }
   files['rig.json'] = new TextEncoder().encode(JSON.stringify(raw));
-  const names = assetNames(metadata, sprites);
+  const names = assetNames(metadata, sprites, parts);
   // Folder images stay as URLs; the renderer (or editor preflight) checks image readability.
   for (const name of names) if (name.endsWith('.png')) files[`built/${name}`] = { size: 1 };
   assertValid(files);

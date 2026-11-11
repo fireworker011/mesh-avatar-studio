@@ -21,6 +21,10 @@ void createAvatarView(canvas, settings, (avatar, now, dt) => {
     for (const [key, value] of Object.entries(sampled.params)) params[key] = (params[key] ?? 0) * (1 - sampled.weight) + value * sampled.weight;
     avatar.setParameters(params);
   }
+  if (sampled.pose !== undefined) {
+    if (sampled.pose) avatar.loadSkeletonPose(sampled.pose);
+    else avatar.setSkeletonPose(null);
+  }
 }).then(view => {
   avatarInstance = view.avatar;
   if (settings.lighting) view.avatar.setLighting(settings.lighting);

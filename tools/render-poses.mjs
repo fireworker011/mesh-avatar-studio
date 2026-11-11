@@ -6,7 +6,7 @@ import { chromium } from '@playwright/test';
 import { validateRig } from '../packages/runtime/src/rig/validate.ts';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const poses = [
+  const poses = [
   ['rest', {}], ['eyes-half', { eyeLOpen: 0.5, eyeROpen: 0.5 }],
   ['eyes-closed', { eyeLOpen: 0, eyeROpen: 0 }], ['mouth-open', { mouthOpen: 1 }],
   ['turn-left', { angleX: -30 }], ['turn-right', { angleX: 30 }],
@@ -15,6 +15,11 @@ const poses = [
   ['body-left', { bodyAngleZ: -8 }], ['body-right', { bodyAngleZ: 8 }],
   // live expressions; they show the drawn expression eyes when the avatar has them
   ['angry', {}, 'angry'], ['sad', {}, 'sad'], ['surprise', {}, 'surprise'],
+];
+const limbPoses = [
+  ['elbow-bend', { forearmL: 1, forearmR: -1 }],
+  ['knee-bend', { shinL: 1, shinR: -1 }],
+  ['torso-bend', { torsoBend: 1 }],
 ];
 
 async function main() {
@@ -27,6 +32,7 @@ async function main() {
   const project = await realpath(resolve(args[0]));
   if (relative(root, project).startsWith('..')) throw new Error('project must stay inside the repository');
   const rig = JSON.parse(await readFile(resolve(project, 'rig.json'), 'utf8'));
+  const reviewPoses = rig.fullBody ? [...poses, ...limbPoses] : poses;
   const errors = validateRig(rig);
   if (errors.length) throw new Error(errors.join('\n'));
   const built = await realpath(resolve(project, 'built'));
@@ -133,14 +139,14 @@ async function main() {
         ctx.fillStyle = '#171b23'; ctx.font = '16px sans-serif'; ctx.fillText(name, x + 8, y + 22);
       }
       return { images: [...pictures, ...crops, ['contact-sheet', sheet.toDataURL()]], width, height, cropBounds: { eyes, mouth }, padTop: 0.1, padSide: 0.1 };
-    }, { rig, assets, poses });
+    }, { rig, assets, poses: reviewPoses });
     if (browserErrors.length) throw new Error(browserErrors.join('\n'));
     const review = resolve(project, 'review'); await mkdir(review, { recursive: true });
     if (relative(project, await realpath(review)).startsWith('..')) throw new Error('review folder must stay inside the project');
     for (const [name, url] of result.images) await writeFile(resolve(review, `${name}.png`), Buffer.from(url.split(',')[1], 'base64'));
     const { images, ...metadata } = result;
-    await writeFile(resolve(review, 'poses.json'), JSON.stringify({ ...metadata, project: basename(project), fixedFps: 60, poseSeconds: 1, poses: poses.map(([name, parameters, expression]) => ({ name, parameters, ...(expression && { expression }) })), hairFrames: 6, files: images.map(([name]) => `${name}.png`) }, null, 2) + '\n');
-    console.log(`Rendered ${poses.length + 6} poses, eye/mouth crops and contact-sheet.png in ${relative(root, review)}/`);
+    await writeFile(resolve(review, 'poses.json'), JSON.stringify({ ...metadata, project: basename(project), fixedFps: 60, poseSeconds: 1, poses: reviewPoses.map(([name, parameters, expression]) => ({ name, parameters, ...(expression && { expression }) })), hairFrames: 6, files: images.map(([name]) => `${name}.png`) }, null, 2) + '\n');
+    console.log(`Rendered ${reviewPoses.length + 6} poses, eye/mouth crops and contact-sheet.png in ${relative(root, review)}/`);
   } finally {
     await browser?.close();
     await server.close();

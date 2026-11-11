@@ -110,6 +110,29 @@ test('checks rectangle coordinates and file names in layer and sprite maps', () 
   }
 });
 
+test('checks that a cutout section names layers in the parts file', () => {
+  const files = fixture();
+  const parts = {
+    version: 1, build: 'parts-2',
+    cutout: { base: 'base_cut', under: ['torso_hidden'], over: ['cap_shoulderL'] },
+    layers: { base_cut: [0, 0, 4, 4], torso_hidden: [0, 0, 4, 4], cap_shoulderL: [0, 0, 4, 4] },
+    bindings: [],
+  };
+  files['built/parts/parts.json'] = encode(parts);
+  files['built/parts/base_cut.png'] = { size: 1 };
+  files['built/parts/torso_hidden.png'] = { size: 1 };
+  files['built/parts/cap_shoulderL.png'] = { size: 1 };
+  expect(validateAvatarFiles(files)).toEqual([]);
+  const missing = structuredClone(parts);
+  missing.cutout.over = ['missing'];
+  files['built/parts/parts.json'] = encode(missing);
+  expect(validateAvatarFiles(files).join('\n')).toContain('built/parts/parts.json.cutout.over[0]: unknown part layer');
+  const bare = structuredClone(parts);
+  delete (bare as { cutout?: unknown }).cutout;
+  files['built/parts/parts.json'] = encode(bare);
+  expect(validateAvatarFiles(files)).toEqual([]);
+});
+
 test('requires bytes for JSON and non-empty bytes or size metadata for images', () => {
   const files = fixture();
   for (const data of [encode(null), new Uint8Array([0xff]), new TextEncoder().encode('{'), { size: 1 }]) {

@@ -27,7 +27,7 @@ thumbnail.png                  optional preview image
 parts. The entire `sprites/` directory can be absent. The renderer then animates the
 generated eye layers and procedural mouth without drawn variants.
 
-Readers ignore unknown files and unknown JSON keys. A project may also contain drafts,
+Readers ignore unknown files and unknown JSON keys. `rig.fullBody` is optional. Older runtimes skip it, and a bust avatar that omits it renders unchanged. A project may also contain drafts,
 source variants, masks and review images; these are not required for playback.
 
 ## Manifest: `avatar.json`
