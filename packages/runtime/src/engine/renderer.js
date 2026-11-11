@@ -236,7 +236,7 @@ export function createRenderer(engine, rig) {
     float wf = mix(0.96, form < 0.0 ? 1.08 : 0.58, abs(form));
     float k = 1.0 - (s / wf) * (s / wf);
     float line = uMouthState.z * (1.0 - clamp(s * s, 0.0, 1.0));
-    float hk = k > 0.0 ? pow(k, mix(0.5, form < 0.0 ? 0.45 : 0.2, abs(form))) : 0.0;
+    float hk = k > 0.0 ? pow(k, mix(0.5, 0.45, abs(form))) : 0.0;
     float rad = length(vec2(s / 1.30, (t - line * 0.25) / (unit * 0.95)));
     if (rad > 1.35 && abs(s) > wf + 0.25) return base;
 
